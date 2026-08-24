@@ -1,0 +1,34 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+
+# Server runtime data (SQLite DB — contains user data, never commit)
+server/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude / tooling config
+.claude/
+.rtk/
+
+# OS
+.DS_Store
+Thumbs.db
