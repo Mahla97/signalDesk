@@ -516,3 +516,7 @@ and nothing is lost — the items simply wait.
 | Admin password change ignored | Credentials are seeded once. Remove the `admin_password_hash` setting row and restart. |
 | Sample signals visible in production | Admin → Signals → **Delete sample data**. |
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal Node output. Not an error. |
+
+---
+
+*Test line for PR workflow verification (remove after test).*
