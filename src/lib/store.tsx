@@ -9,9 +9,20 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError } from './api';
-import { KEYS, deviceToken, read, readJson, remove, write, writeJson } from './storage';
+import {
+  KEYS,
+  deviceToken,
+  pushToken,
+  read,
+  readJson,
+  remove,
+  setPushToken,
+  write,
+  writeJson,
+} from './storage';
 import { deviceTimezone } from './time';
 import { requestPushPermission, startPushPolling } from './push';
+import { isNativePlatform, nativePlatformName, registerNativePush } from './nativePush';
 import type { AppConfig, AppUser, NotificationPreferences, PendingNotification } from './types';
 
 const DEFAULT_PREFS: NotificationPreferences = {
@@ -76,7 +87,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
           method: 'POST',
           body: {
             token: deviceToken(),
-            platform: 'android',
+            pushToken: pushToken(),
+            platform: nativePlatformName(),
             timezone: tz,
             preferences: nextPrefs,
           },
@@ -134,6 +146,40 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
   }, []);
 
   useEffect(() => {
+    // Native shell: FCM delivers (and the OS displays) the notification, so there
+    // is nothing to poll — we only register the token and toast foreground items.
+    // Web: drain the backend queue while the tab is open.
+    if (isNativePlatform()) {
+      let cancelled = false;
+      let stop: (() => void) | null = null;
+      void registerNativePush({
+        onToken: (token) => {
+          setPushToken(token);
+          void registerDevice(prefs, timezone);
+        },
+        onMessage: (message) => {
+          setToasts((current) => [
+            ...current,
+            {
+              id: Date.now(),
+              title: message.title,
+              body: message.body,
+              signalId: message.signalId ?? 0,
+              kind: message.kind,
+            },
+          ]);
+          void refreshUser();
+        },
+      }).then((cleanup) => {
+        if (cancelled) cleanup();
+        else stop = cleanup;
+      });
+      return () => {
+        cancelled = true;
+        stop?.();
+      };
+    }
+
     const stop = startPushPolling((items: PendingNotification[]) => {
       setToasts((current) => [
         ...current,
@@ -148,7 +194,7 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       void refreshUser();
     });
     return stop;
-  }, [refreshUser]);
+  }, [refreshUser, registerDevice, prefs, timezone]);
 
   useEffect(() => {
     if (toasts.length === 0) return;

@@ -14,6 +14,10 @@ export function sendJson(res: ServerResponse, status: number, data: unknown): vo
   res.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
     'Cache-Control': 'no-store',
+    // The mobile shell loads its assets from https://localhost, so every API
+    // call is cross-origin. Auth travels in explicit headers (not cookies), so
+    // a wildcard origin exposes nothing a caller couldn't already fetch.
+    'Access-Control-Allow-Origin': '*',
   });
   res.end(body);
 }

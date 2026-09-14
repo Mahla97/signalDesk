@@ -18,6 +18,7 @@ import Contact from './pages/Contact';
 import Profile from './pages/Profile';
 import Admin from './pages/Admin';
 import { StoreProvider, useStore } from './lib/store';
+import { addNotificationTapListener } from './lib/nativePush';
 
 /** Opens signal details when the app is launched from a notification deep link. */
 function DeepLinkHandler(): null {
@@ -32,6 +33,22 @@ function DeepLinkHandler(): null {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Native: a tapped push notification carries the signal to open.
+  useEffect(() => {
+    let cancelled = false;
+    let stop: (() => void) | null = null;
+    void addNotificationTapListener((signalId) => {
+      navigate('/signal/' + signalId);
+    }).then((cleanup) => {
+      if (cancelled) cleanup();
+      else stop = cleanup;
+    });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [navigate]);
 
   useEffect(() => {
     window.scrollTo(0, 0);

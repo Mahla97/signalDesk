@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "19137416279",
+    "project_id": "signaldesk-adb5b",
+    "storage_bucket": "signaldesk-adb5b.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:19137416279:android:fa1060ff6334158b08a712",
+        "android_client_info": {
+          "package_name": "com.signaldesk.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDPRub1BDrk29Xs_HCp2HEPuDK-5DsrijA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

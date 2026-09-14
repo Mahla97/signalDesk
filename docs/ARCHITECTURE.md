@@ -56,7 +56,7 @@ signal service do not change.
 | `TRADINGVIEW_WEBHOOK_SECRET` | **yes in production** | `change-me-tradingview-secret` | Shared secret checked with a constant-time compare. |
 | `ADMIN_USERNAME` | no | `admin` | Only read on the very first boot. |
 | `ADMIN_PASSWORD` | no | `Kx7-Panel-Trade-92` | Only read on the very first boot; stored hashed. |
-| `FCM_SERVER_KEY` | no | — | When set, deliveries are pushed to Firebase Cloud Messaging; otherwise they are queued for the device to pull. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | no | — | Path to the Firebase service-account JSON. When set, deliveries are pushed via FCM HTTP v1; otherwise they are queued for the device to pull. |
 
 Secrets are never logged. The webhook logs record the outcome and the caller,
 never the token itself.

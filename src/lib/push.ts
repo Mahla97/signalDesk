@@ -9,8 +9,10 @@ import type { PendingNotification } from './types';
  * each item. If the browser/WebView blocks notifications we still surface the
  * item as an in-app toast, so nothing is silently lost.
  *
- * Delivery while the app is fully closed requires a push transport: set
- * FCM_SERVER_KEY on the server and the same jobs are sent through FCM instead.
+ * Delivery while the app is fully closed requires a push transport: point the
+ * server at a Firebase service account (GOOGLE_APPLICATION_CREDENTIALS) and the
+ * same jobs are sent through FCM HTTP v1 instead. Inside the native shell this
+ * polling is replaced by native push — see nativePush.ts.
  */
 
 function notificationSupported(): boolean {

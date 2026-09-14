@@ -1,3 +1,6 @@
+
+import { createSign } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { db } from '../lib/db.js';
 import { getSettingNumber } from './schema.js';
 import type { SignalRow } from './signals.js';
@@ -7,6 +10,7 @@ import { isoPlusMs, nowIso, startOfUtcDayIso } from './util.js';
 export type DeviceRow = {
   id: number;
   token: string;
+  push_token: string | null;
   user_id: number | null;
   platform: string;
   notifications_enabled: number;
@@ -184,9 +188,68 @@ export function enqueueSignalDistribution(
 
 export type TransportResult = { ok: boolean; retriable: boolean; invalidToken?: boolean; error?: string };
 
+/** A Firebase service-account key (Project settings → Service accounts → Generate new private key). */
+type ServiceAccount = { project_id: string; client_email: string; private_key: string };
+
 /**
- * Push transport. When FCM_SERVER_KEY is configured the payload is handed to
- * FCM; otherwise the job is parked as SENT and the device picks it up from
+ * Loads the FCM service account from an inline JSON env var (FCM_SERVICE_ACCOUNT_JSON)
+ * or a file path (GOOGLE_APPLICATION_CREDENTIALS). Returns null when push is not
+ * configured, in which case delivery degrades to the device pulling
+ * /api/notifications/pending.
+ */
+function loadServiceAccount(): ServiceAccount | null {
+  const inline = process.env.FCM_SERVICE_ACCOUNT_JSON;
+  const path = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+  try {
+    const raw = inline ?? (path ? readFileSync(path, 'utf8') : null);
+    if (!raw) return null;
+    const sa = JSON.parse(raw) as ServiceAccount;
+    return sa.project_id && sa.client_email && sa.private_key ? sa : null;
+  } catch (err) {
+    console.error('[fcm] could not read service account:', (err as Error).message);
+    return null;
+  }
+}
+
+let cachedAccessToken: { value: string; expiresAt: number } | null = null;
+
+/** Exchanges the service account for an OAuth2 access token (cached for ~1h). */
+async function getAccessToken(sa: ServiceAccount): Promise<string> {
+  if (cachedAccessToken && cachedAccessToken.expiresAt > Date.now() + 60_000) {
+    return cachedAccessToken.value;
+  }
+  const b64 = (obj: unknown) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+  const iat = Math.floor(Date.now() / 1000);
+  const unsigned = `${b64({ alg: 'RS256', typ: 'JWT' })}.${b64({
+    iss: sa.client_email,
+    scope: 'https://www.googleapis.com/auth/firebase.messaging',
+    aud: 'https://oauth2.googleapis.com/token',
+    iat,
+    exp: iat + 3600,
+  })}`;
+  const signer = createSign('RSA-SHA256');
+  signer.update(unsigned);
+  signer.end();
+  const assertion = `${unsigned}.${signer.sign(sa.private_key).toString('base64url')}`;
+
+  const res = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      grant_type: 'urn:ietf:params:oauth:grant-type:jwt-bearer',
+      assertion,
+    }).toString(),
+  });
+  if (!res.ok) throw new Error('fcm oauth failed: ' + res.status);
+  const data = (await res.json()) as { access_token: string; expires_in: number };
+  cachedAccessToken = { value: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 };
+  return data.access_token;
+}
+
+/**
+ * Push transport. With a service account configured the message is handed to FCM
+ * HTTP v1 addressed to the device's FCM registration token (push_token); otherwise
+ * the job is parked as SENT and the device picks it up from
  * /api/notifications/pending the moment it is running.
  * Adding Telegram (or any other channel) later means adding a function here —
  * the webhook and the signal service do not change.
@@ -197,41 +260,51 @@ export async function transportSend(
   kind: DeliveryKind = 'NEW',
   revision = 0,
 ): Promise<TransportResult> {
-  const key = process.env.FCM_SERVER_KEY;
-  if (!key) return { ok: true, retriable: false };
+  const sa = loadServiceAccount();
+  const target = device.push_token ?? null;
+  if (!sa || !target) return { ok: true, retriable: false };
 
   const content = buildNotification(signal, kind, revision);
   const payload = {
-    to: device.token,
-    priority: 'high',
-    data: {
-      type: 'TRADING_SIGNAL',
-      event: kind === 'UPDATE' ? 'SIGNAL_UPDATED' : 'SIGNAL_CREATED',
-      signalId: String(signal.id),
-      revision: String(revision),
+    message: {
+      token: target,
+      notification: { title: content.title, body: content.body },
+      data: {
+        type: 'TRADING_SIGNAL',
+        event: kind === 'UPDATE' ? 'SIGNAL_UPDATED' : 'SIGNAL_CREATED',
+        signalId: String(signal.id),
+        revision: String(revision),
+      },
+      android: { priority: 'high' },
     },
-    notification: { title: content.title, body: content.body },
   };
 
   try {
-    const res = await fetch('https://fcm.googleapis.com/fcm/send', {
+    const accessToken = await getAccessToken(sa);
+    const res = await fetch(`https://fcm.googleapis.com/v1/projects/${sa.project_id}/messages:send`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: 'key=' + key },
+      headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + accessToken },
       body: JSON.stringify(payload),
     });
-    if (res.status === 200) {
-      const body = (await res.json()) as { failure?: number; results?: { error?: string }[] };
-      const error = body.results?.[0]?.error;
-      if (error === 'NotRegistered' || error === 'InvalidRegistration') {
-        return { ok: false, retriable: false, invalidToken: true, error };
-      }
-      if (error) return { ok: false, retriable: true, error };
-      return { ok: true, retriable: false };
+    if (res.ok) return { ok: true, retriable: false };
+
+    const body = (await res.json().catch(() => ({}))) as {
+      error?: { status?: string; message?: string; details?: { errorCode?: string }[] };
+    };
+    const code = body.error?.details?.find((d) => d.errorCode)?.errorCode;
+    const status = body.error?.status;
+
+    // A dead registration token — disable the device rather than retrying forever.
+    if (code === 'UNREGISTERED' || code === 'INVALID_ARGUMENT') {
+      return { ok: false, retriable: false, invalidToken: true, error: code };
     }
-    if (res.status === 401 || res.status === 400) {
-      return { ok: false, retriable: false, error: 'transport rejected: ' + res.status };
+    if (status === 'UNAUTHENTICATED' || status === 'PERMISSION_DENIED') {
+      return { ok: false, retriable: false, error: 'fcm auth rejected: ' + (body.error?.message ?? status) };
     }
-    return { ok: false, retriable: true, error: 'transport status ' + res.status };
+    if (res.status >= 500 || status === 'UNAVAILABLE' || status === 'INTERNAL') {
+      return { ok: false, retriable: true, error: 'fcm ' + res.status };
+    }
+    return { ok: false, retriable: false, error: body.error?.message ?? 'fcm ' + res.status };
   } catch (err) {
     return { ok: false, retriable: true, error: (err as Error).message };
   }

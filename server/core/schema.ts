@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS admin_tokens (
 CREATE TABLE IF NOT EXISTS devices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   token TEXT NOT NULL UNIQUE,
+  push_token TEXT,
   user_id INTEGER,
   platform TEXT NOT NULL DEFAULT 'android',
   notifications_enabled INTEGER NOT NULL DEFAULT 1,
@@ -318,6 +319,7 @@ export function initDatabase(): void {
   ensureColumn('signals', 'take_profits', 'TEXT');
   ensureColumn('signals', 'edited_at', 'TEXT');
   ensureColumn('signals', 'edit_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('devices', 'push_token', 'TEXT');
   migrateDeliveryJobs();
   backfillTakeProfits();
 

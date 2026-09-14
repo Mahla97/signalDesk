@@ -218,6 +218,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const user = currentUser(req);
     const platform = toStr(body.platform, 20) ?? 'web';
     const timezone = toStr(body.timezone, 60);
+    // The install identity (`token`, sent back as x-device-token) is stable; the
+    // FCM registration token (`pushToken`) rotates and is only the delivery target.
+    const pushToken = toStr(body.pushToken, 4096);
     const prefs = (body.preferences ?? {}) as Record<string, unknown>;
     const bool = (v: unknown, fallback = 1) => (v === undefined ? fallback : v ? 1 : 0);
     const now = nowIso();
@@ -229,6 +232,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (existing) {
       db.prepare(
         `UPDATE devices SET user_id = ?, platform = ?, timezone = ?, disabled = 0, last_seen_at = ?,
+           push_token = COALESCE(?, push_token),
            notifications_enabled = ?, trading_signals_enabled = ?, buy_signals_enabled = ?, sell_signals_enabled = ?
          WHERE id = ?`,
       ).run(
@@ -236,6 +240,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         platform,
         timezone ?? existing.timezone,
         now,
+        pushToken,
         bool(prefs.tradingNotificationsEnabled ?? prefs.notificationsEnabled, existing.notifications_enabled),
         bool(prefs.tradingSignalsEnabled, existing.trading_signals_enabled),
         bool(prefs.buySignalsEnabled, existing.buy_signals_enabled),
@@ -245,11 +250,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } else {
       db.prepare(
         `INSERT INTO devices
-           (token, user_id, platform, timezone, notifications_enabled, trading_signals_enabled,
+           (token, push_token, user_id, platform, timezone, notifications_enabled, trading_signals_enabled,
             buy_signals_enabled, sell_signals_enabled, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         token,
+        pushToken,
         user ? user.id : null,
         platform,
         timezone,
