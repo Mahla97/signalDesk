@@ -619,7 +619,11 @@ export function isLockedFor(row: SignalRow, isPro: boolean, unlocked?: Set<numbe
 
 export type ListOptions = {
   status?: 'open' | 'closed' | 'all';
+  statusExact?: 'OPEN' | 'CLOSED' | 'DRAFT' | null;
   market?: string | null;
+  action?: string | null;
+  timeFrom?: string | null;
+  timeTo?: string | null;
   page: number;
   pageSize: number;
   isPro: boolean;
@@ -639,13 +643,28 @@ export function listSignals(opts: ListOptions): {
 
   conds.push('deleted_at IS NULL');
 
-  if (opts.status === 'open') {
+  if (opts.statusExact) {
+    conds.push('status = ?');
+    params.push(opts.statusExact);
+  } else if (opts.status === 'open') {
     conds.push("status = 'OPEN'");
   } else if (opts.status === 'closed') {
     const days = getSettingNumber('history_days', 14);
     conds.push("status = 'CLOSED'");
     conds.push('COALESCE(closed_at, signal_timestamp) >= ?');
     params.push(new Date(Date.now() - days * 86400000).toISOString());
+  }
+  if (opts.action) {
+    conds.push('action = ?');
+    params.push(opts.action.toUpperCase());
+  }
+  if (opts.timeFrom) {
+    conds.push('signal_timestamp >= ?');
+    params.push(opts.timeFrom);
+  }
+  if (opts.timeTo) {
+    conds.push('signal_timestamp <= ?');
+    params.push(opts.timeTo);
   }
   if (opts.market) {
     conds.push('market = ?');

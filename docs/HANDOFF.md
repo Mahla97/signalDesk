@@ -255,6 +255,7 @@ The feed does **not** wait for a manual reload:
 - Admin: close-signal uses an in-app price dialog (no `window.prompt`).
 - Admin create form: validation + CRYPTO/FOREX selector; Publish/Draft disabled until valid.
 - History paginates with a "Load more" button (page size 10).
+- Admin signal table: pagination + filters (status, action, time range).
 - New test suite `npm run test:admin` covering add/edit/delete.
 
 ---

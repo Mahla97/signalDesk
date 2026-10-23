@@ -906,19 +906,40 @@ function SignalsTab(): React.ReactElement {
     null,
   );
   const [closing, setClosing] = useState<Signal | null>(null);
+  const [filters, setFilters] = useState({ status: '', action: '', from: '', to: '' });
+  const [page, setPage] = useState(1);
+  const [total, setTotal] = useState(0);
+  const [hasMore, setHasMore] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const res = await api<{ items: Signal[] }>('/admin/signals', { admin: true });
+      const params = new URLSearchParams();
+      params.set('page', String(page));
+      params.set('pageSize', '25');
+      if (filters.status) params.set('status', filters.status);
+      if (filters.action) params.set('action', filters.action);
+      if (filters.from) params.set('from', filters.from);
+      if (filters.to) params.set('to', filters.to);
+      const res = await api<{ items: Signal[]; total: number; hasMore: boolean }>(
+        '/admin/signals?' + params.toString(),
+        { admin: true },
+      );
       setSignals(res.items);
+      setTotal(res.total);
+      setHasMore(res.hasMore);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load signals.');
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [page, filters]);
+
+  function applyFilters(next: typeof filters): void {
+    setFilters(next);
+    setPage(1);
+  }
 
   useEffect(() => {
     void load();
@@ -1105,6 +1126,59 @@ function SignalsTab(): React.ReactElement {
         </form>
       </Panel>
 
+      <Panel className="p-4">
+        <div className="flex flex-wrap items-end gap-3">
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Status</span>
+            <select
+              value={filters.status}
+              onChange={(e) => applyFilters({ ...filters, status: e.target.value })}
+              data-testid="admin-filter-status"
+              className={inputClass + ' min-w-36'}
+            >
+              <option value="">All</option>
+              <option value="OPEN">Open</option>
+              <option value="CLOSED">Closed</option>
+              <option value="DRAFT">Draft</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">Action</span>
+            <select
+              value={filters.action}
+              onChange={(e) => applyFilters({ ...filters, action: e.target.value })}
+              data-testid="admin-filter-action"
+              className={inputClass + ' min-w-36'}
+            >
+              <option value="">All</option>
+              <option value="BUY">BUY</option>
+              <option value="SELL">SELL</option>
+              <option value="CLOSE">CLOSE</option>
+            </select>
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">From</span>
+            <input
+              type="date"
+              value={filters.from}
+              onChange={(e) => applyFilters({ ...filters, from: e.target.value })}
+              data-testid="admin-filter-from"
+              className={inputClass}
+            />
+          </label>
+          <label className="block">
+            <span className="mb-1 block text-xs font-bold uppercase tracking-wide text-slate-400">To</span>
+            <input
+              type="date"
+              value={filters.to}
+              onChange={(e) => applyFilters({ ...filters, to: e.target.value })}
+              data-testid="admin-filter-to"
+              className={inputClass}
+            />
+          </label>
+        </div>
+      </Panel>
+
       {notice ? (
         <p
           className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200"
@@ -1229,6 +1303,20 @@ function SignalsTab(): React.ReactElement {
           </p>
         </>
       )}
+
+      {!loading && !error && signals.length > 0 ? (
+        <div className="flex items-center justify-between gap-2">
+          <Button variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => p - 1)} testId="admin-page-prev">
+            ← Previous
+          </Button>
+          <span className="text-xs text-slate-400">
+            Page {page} · {total} signal{total === 1 ? '' : 's'}
+          </span>
+          <Button variant="ghost" disabled={!hasMore} onClick={() => setPage((p) => p + 1)} testId="admin-page-next">
+            Next →
+          </Button>
+        </div>
+      ) : null}
 
       {editing ? (
         <EditSignalDialog
