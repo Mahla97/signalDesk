@@ -35,7 +35,7 @@ staff management panel.
 | Screen | What it does |
 | --- | --- |
 | First run | Risk disclaimer acknowledgement + timezone selection (defaults to the device timezone) |
-| Signals | Live feed, newest first. Free users see the newest N in full, the rest blurred/locked |
+| Signals | Live feed, newest first. Free users see the first N open signals of the day in full, the rest blurred/locked |
 | Signal details | Entry, stop loss, **all take-profit levels**, timing in the user's timezone, change history |
 | History | Closed signals from the last 14 days, with result and P/L, paginated |
 | Calculator | Position-size / risk calculator for crypto (units) and forex (lots) |
@@ -347,8 +347,7 @@ is decided by `evaluateEligibility()` and the reason is stored for the logs:
 | BUY/SELL preference off | `buy_pref_off` / `sell_pref_off` |
 | User suspended | `user_suspended` |
 | Pro active (`plan = PRO`, not suspended, `pro_end_at` in the future) | sent — `pro_active` |
-| Free, under the daily cap | sent — `free_quota` |
-| Free, cap reached | `free_daily_limit` |
+| Free (no push cap) | sent — `free_quota` |
 | Any edit notice for a signal the device already has | sent — `signal_updated` |
 
 Retries: up to 5 attempts with exponential backoff (5s, 10s, 20s, 40s, 80s). An `NotRegistered`
@@ -385,7 +384,7 @@ than the balance. Spread, commission, funding and slippage are explicitly exclud
 
 | Role | Auth | Can |
 | --- | --- | --- |
-| Guest / Free | none (device token only) | Browse the feed with the newest N signals unlocked, read closed history, use the calculator, set timezone, receive up to 2 pushes per day |
+| Guest / Free | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone, receive up to 2 pushes per day |
 | Pro | email + password, plan granted by staff | Everything above with **all** signals unlocked and unlimited real-time pushes while `pro_end_at` is in the future |
 | Suspended | — | Treated as ineligible for all notifications |
 | Admin | username + password → bearer token | Users and Pro durations, suspend, create/edit/close/delete signals, delivery + webhook logs, runtime settings |
@@ -536,7 +535,7 @@ Start both processes first (§5.1).
 ### 13.1 Manual walkthrough
 
 1. **First run** — accept the risk disclaimer, pick a timezone.
-2. **Signals** — newest first. As a free user the newest N are readable; the rest are blurred.
+2. **Signals** — newest first. As a free user the first N open signals of the day are readable; the rest are blurred.
 3. **Locked card** — tapping one says “Pro required” instead of showing details.
 4. **History** — closed signals from the last 14 days, with result and P/L.
 5. **Calculator** — balance, risk %, entry, stop → units (crypto) or lots (forex).
@@ -561,9 +560,10 @@ Expect `202 {"ok":true,"duplicate":false,...}` and, seconds later, a system noti
 it opens that signal. **Replay the same `id`** and you get `200 {"duplicate":true}` with **no
 second notification** — that is the idempotency guarantee.
 
-On the free plan only **2 pushes a day** go out (`free_push_per_day`, Admin → Settings). The
-third signal is recorded as `SKIPPED / free_daily_limit` rather than delivered; grant Pro to
-remove the cap. Every skip reason is visible in **Admin → Delivery logs**.
+Free users get a push for every signal, but once they've passed the daily
+`free_visible_count` limit the push is a generic "New signal released" alert with no
+symbol/price. Pro users get the full text. Every skip reason is visible in
+**Admin → Delivery logs**.
 
 ### 13.3 Automated API suite
 
@@ -628,7 +628,7 @@ and nothing is lost — the items simply wait.
 | --- | --- |
 | Webhook returns `401` | Secret mismatch. Compare `TRADINGVIEW_WEBHOOK_SECRET` with the alert message (never logged — check the value, not the log). |
 | Webhook returns `422` | `symbol` or `action` missing, or an action other than BUY/SELL/CLOSE. |
-| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`free_daily_limit`, `notifications_off`, `sell_pref_off`, …). |
+| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `sell_pref_off`, …). |
 | Notifications only arrive with the app open | No Firebase service account is configured (`GOOGLE_APPLICATION_CREDENTIALS` unset). That is the expected fallback behaviour. |
 | An edit sent no notification | Nothing actually changed, `notify` was unticked, or no device had received the original signal yet (SENT/DELIVERED). |
 | Admin password change ignored | Credentials are seeded once. Remove the `admin_password_hash` setting row and restart. |

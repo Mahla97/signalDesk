@@ -1,6 +1,6 @@
 import { db } from '../lib/db.js';
 import { getSettingNumber } from './schema.js';
-import { nowIso, sha1, toNumber, toStr } from './util.js';
+import { nowIso, sha1, startOfUtcDayIso, toNumber, toStr } from './util.js';
 
 export type SignalRow = {
   id: number;
@@ -26,6 +26,7 @@ export type SignalRow = {
   signal_timestamp: string;
   received_at: string;
   created_at: string;
+  deleted_at: string | null;
 };
 
 export type SignalChange = {
@@ -163,7 +164,7 @@ export function getSignalById(id: number): SignalRow | undefined {
 }
 
 export function getSignalByExternalId(externalId: string): SignalRow | undefined {
-  return db.prepare('SELECT * FROM signals WHERE external_signal_id = ?').get(externalId) as
+  return db.prepare('SELECT * FROM signals WHERE external_signal_id = ? AND deleted_at IS NULL').get(externalId) as
     | SignalRow
     | undefined;
 }
@@ -279,7 +280,7 @@ export function closeMatchingSignal(
   const open = db
     .prepare(
       `SELECT * FROM signals
-       WHERE symbol = ? AND status = 'OPEN' AND action IN ('BUY','SELL')
+       WHERE symbol = ? AND status = 'OPEN' AND action IN ('BUY','SELL') AND deleted_at IS NULL
        ORDER BY id DESC LIMIT 1`,
     )
     .get(symbol) as SignalRow | undefined;
@@ -576,13 +577,37 @@ function redact(row: SignalRow, locked: boolean): PublicSignal {
   };
 }
 
-/** Ids a free viewer may read in full: the newest N open signals. */
+/** Ids a free viewer may read in full: the first N open signals of the current day. */
 export function unlockedOpenIds(): Set<number> {
   const limit = getSettingNumber('free_visible_count', 3);
   const rows = db
-    .prepare(`SELECT id FROM signals WHERE status = 'OPEN' ORDER BY signal_timestamp DESC, id DESC LIMIT ?`)
-    .all(limit) as { id: number }[];
+    .prepare(
+      `SELECT id FROM signals
+       WHERE status = 'OPEN' AND deleted_at IS NULL AND signal_timestamp >= ?
+       ORDER BY signal_timestamp ASC, id ASC LIMIT ?`,
+    )
+    .all(startOfUtcDayIso(), limit) as { id: number }[];
   return new Set(rows.map((r) => r.id));
+}
+
+/**
+ * Whether a single signal falls inside the free "first N of today" window.
+ * Unlike unlockedOpenIds() it ignores the signal's own deleted/status state, so
+ * it also answers correctly for a soft-deleted signal (DELETE notification).
+ */
+export function isSignalInFreeWindow(signal: SignalRow): boolean {
+  const limit = getSettingNumber('free_visible_count', 3);
+  const since = startOfUtcDayIso();
+  const ts = signal.signal_timestamp;
+  if (!ts || ts < since) return false;
+  const earlier = db
+    .prepare(
+      `SELECT COUNT(*) AS c FROM signals
+       WHERE status = 'OPEN' AND deleted_at IS NULL AND signal_timestamp >= ?
+         AND (signal_timestamp < ? OR (signal_timestamp = ? AND id < ?))`,
+    )
+    .get(since, ts, ts, signal.id) as { c: number };
+  return earlier.c < limit;
 }
 
 export function isLockedFor(row: SignalRow, isPro: boolean, unlocked?: Set<number>): boolean {
@@ -611,6 +636,8 @@ export function listSignals(opts: ListOptions): {
   const pageSize = Math.min(50, Math.max(1, Math.floor(opts.pageSize)));
   const conds: string[] = [];
   const params: (string | number)[] = [];
+
+  conds.push('deleted_at IS NULL');
 
   if (opts.status === 'open') {
     conds.push("status = 'OPEN'");
@@ -657,8 +684,19 @@ export function rawPublicSignal(row: SignalRow): PublicSignal {
   return redact(row, false);
 }
 
-export function deleteSignal(id: number): void {
-  db.prepare('DELETE FROM signals WHERE id = ?').run(id);
+export function deleteSignal(id: number): SignalRow | undefined {
+  const row = getSignalById(id);
+  if (!row || row.deleted_at) return undefined;
+  db.prepare('UPDATE signals SET deleted_at = ? WHERE id = ?').run(nowIso(), id);
+  return row;
+}
+
+/** Publishes a draft: DRAFT → OPEN, timestamped now so it lands at the top of the feed. */
+export function publishSignal(id: number): SignalRow | undefined {
+  const row = getSignalById(id);
+  if (!row || row.deleted_at || row.status !== 'DRAFT') return undefined;
+  db.prepare("UPDATE signals SET status = 'OPEN', signal_timestamp = ? WHERE id = ?").run(nowIso(), id);
+  return getSignalById(id);
 }
 
 export function deleteSampleSignals(): number {
@@ -673,7 +711,7 @@ export function performanceStats(): { total: number; wins: number; losses: numbe
          COUNT(*) AS total,
          SUM(CASE WHEN result = 'TP' OR pnl_percent > 0 THEN 1 ELSE 0 END) AS wins,
          SUM(CASE WHEN result = 'SL' OR pnl_percent < 0 THEN 1 ELSE 0 END) AS losses
-       FROM signals WHERE status = 'CLOSED'`,
+       FROM signals WHERE status = 'CLOSED' AND deleted_at IS NULL`,
     )
     .get() as { total: number; wins: number | null; losses: number | null };
   const total = row.total ?? 0;

@@ -154,8 +154,8 @@ export default function Profile(): React.ReactElement {
             <li>• Pro membership is linked to your email address.</li>
             <li>• Your plan follows you to any device you sign in on.</li>
             <li>
-              • Free browsing keeps working without an account — {config.freeVisibleCount} newest signals and{' '}
-              {config.freePushPerDay} alerts a day.
+              • Free browsing keeps working without an account — the first {config.freeVisibleCount} signals of the
+              day are unlocked.
             </li>
           </ul>
         </Panel>

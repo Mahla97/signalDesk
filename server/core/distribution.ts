@@ -2,10 +2,9 @@
 import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { db } from '../lib/db.js';
-import { getSettingNumber } from './schema.js';
 import type { SignalRow } from './signals.js';
-import { changeSummary, getSignalById, listSignalChanges } from './signals.js';
-import { isoPlusMs, nowIso, startOfUtcDayIso } from './util.js';
+import { changeSummary, getSignalById, isSignalInFreeWindow, listSignalChanges } from './signals.js';
+import { isoPlusMs, nowIso } from './util.js';
 
 export type DeviceRow = {
   id: number;
@@ -29,7 +28,7 @@ type DeviceWithUser = DeviceRow & {
   pro_end_at: string | null;
 };
 
-export type DeliveryKind = 'NEW' | 'UPDATE';
+export type DeliveryKind = 'NEW' | 'UPDATE' | 'DELETE';
 
 export type Eligibility = { eligible: boolean; reason: string };
 
@@ -57,9 +56,10 @@ export function evaluateEligibility(
 
   if (device.suspended) return { eligible: false, reason: 'user_suspended' };
 
-  // A correction to a signal the device already holds always goes through:
-  // withholding it would leave the trader acting on stale numbers.
+  // A correction (or removal) to a signal the device already holds always goes
+  // through: withholding it would leave the trader acting on stale numbers.
   if (kind === 'UPDATE') return { eligible: true, reason: 'signal_updated' };
+  if (kind === 'DELETE') return { eligible: true, reason: 'signal_deleted' };
 
   const proActive =
     device.plan === 'PRO' &&
@@ -69,20 +69,7 @@ export function evaluateEligibility(
 
   if (proActive) return { eligible: true, reason: 'pro_active' };
 
-  const limit = getSettingNumber('free_push_per_day', 2);
-  const used = freePushUsedToday(device.id);
-  if (used >= limit) return { eligible: false, reason: 'free_daily_limit' };
   return { eligible: true, reason: 'free_quota' };
-}
-
-export function freePushUsedToday(deviceId: number): number {
-  const row = db
-    .prepare(
-      `SELECT COUNT(*) AS c FROM delivery_jobs
-       WHERE device_id = ? AND kind = 'NEW' AND status IN ('SENT','DELIVERED') AND created_at >= ?`,
-    )
-    .get(deviceId, startOfUtcDayIso()) as { c: number };
-  return row.c ?? 0;
 }
 
 /* ---------------------------- notification copy ---------------------------- */
@@ -92,6 +79,12 @@ export function buildNotification(
   kind: DeliveryKind,
   revision: number,
 ): { title: string; body: string } {
+  if (kind === 'DELETE') {
+    return {
+      title: `Deleted: ${signal.action} ${signal.symbol}`,
+      body: 'This signal was removed.',
+    };
+  }
   if (kind === 'UPDATE') {
     const changes = listSignalChanges(signal.id, revision);
     return {
@@ -103,6 +96,40 @@ export function buildNotification(
     title: `${signal.action} ${signal.symbol}`,
     body: `${signal.strategy_name}${signal.timeframe ? ' • ' + signal.timeframe : ''}`,
   };
+}
+
+/**
+ * Notification content for a specific device. Free devices get the full text
+ * only when the signal is inside their daily visible window (free_visible_count);
+ * otherwise the push is a generic "new signal" alert that leaks no details.
+ * UPDATE/DELETE always show full text — the device already holds the signal.
+ */
+export function buildNotificationForDevice(
+  deviceId: number,
+  signal: SignalRow,
+  kind: DeliveryKind,
+  revision: number,
+): { title: string; body: string } {
+  const full = buildNotification(signal, kind, revision);
+
+  const user = db
+    .prepare(
+      'SELECT u.plan, u.suspended, u.pro_end_at FROM devices d LEFT JOIN users u ON u.id = d.user_id WHERE d.id = ?',
+    )
+    .get(deviceId) as { plan: string | null; suspended: number | null; pro_end_at: string | null } | undefined;
+
+  const proActive =
+    user?.plan === 'PRO' &&
+    !user?.suspended &&
+    Boolean(user?.pro_end_at) &&
+    new Date(user.pro_end_at as string).getTime() > Date.now();
+
+  if (proActive || isSignalInFreeWindow(signal)) return full;
+
+  const generic = { body: 'Upgrade to Pro to view this signal.' };
+  if (kind === 'DELETE') return { title: 'Signal removed', ...generic };
+  if (kind === 'UPDATE') return { title: 'Signal updated', ...generic };
+  return { title: 'New signal released', ...generic };
 }
 
 /* ------------------------------ distribution ------------------------------ */
@@ -126,7 +153,7 @@ export function enqueueSignalDistribution(
   if (!signal) return { queued: 0, skipped: 0 };
 
   const devices =
-    kind === 'UPDATE'
+    kind === 'UPDATE' || kind === 'DELETE'
       ? (db
           .prepare(
             `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.pro_end_at AS pro_end_at
@@ -264,14 +291,14 @@ export async function transportSend(
   const target = device.push_token ?? null;
   if (!sa || !target) return { ok: true, retriable: false };
 
-  const content = buildNotification(signal, kind, revision);
+  const content = buildNotificationForDevice(device.id, signal, kind, revision);
   const payload = {
     message: {
       token: target,
       notification: { title: content.title, body: content.body },
       data: {
         type: 'TRADING_SIGNAL',
-        event: kind === 'UPDATE' ? 'SIGNAL_UPDATED' : 'SIGNAL_CREATED',
+        event: kind === 'UPDATE' ? 'SIGNAL_UPDATED' : kind === 'DELETE' ? 'SIGNAL_DELETED' : 'SIGNAL_CREATED',
         signalId: String(signal.id),
         revision: String(revision),
       },
@@ -335,7 +362,7 @@ async function processJob(job: JobRow): Promise<void> {
     return;
   }
 
-  const kind: DeliveryKind = job.kind === 'UPDATE' ? 'UPDATE' : 'NEW';
+  const kind: DeliveryKind = job.kind === 'UPDATE' ? 'UPDATE' : job.kind === 'DELETE' ? 'DELETE' : 'NEW';
   const result = await transportSend(device, signal, kind, job.revision ?? 0);
   const attempts = job.attempts + 1;
 
@@ -422,7 +449,7 @@ export function pendingForDevice(
   return rows.map((r) => ({
     jobId: r.id,
     signalId: r.signal_id,
-    kind: r.kind === 'UPDATE' ? 'UPDATE' : 'NEW',
+    kind: r.kind === 'UPDATE' ? 'UPDATE' : r.kind === 'DELETE' ? 'DELETE' : 'NEW',
     revision: r.revision ?? 0,
   }));
 }

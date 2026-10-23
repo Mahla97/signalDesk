@@ -29,7 +29,7 @@ export type PushMessage = {
   title: string;
   body: string;
   signalId: number | null;
-  kind: 'NEW' | 'UPDATE';
+  kind: 'NEW' | 'UPDATE' | 'DELETE';
 };
 
 export type NativePushHandlers = {
@@ -67,7 +67,7 @@ export async function registerNativePush(handlers: NativePushHandlers): Promise<
         title: notification.title ?? '',
         body: notification.body ?? '',
         signalId: asSignalId(data.signalId),
-        kind: data.event === 'SIGNAL_UPDATED' ? 'UPDATE' : 'NEW',
+        kind: data.event === 'SIGNAL_UPDATED' ? 'UPDATE' : data.event === 'SIGNAL_DELETED' ? 'DELETE' : 'NEW',
       });
     }),
   );

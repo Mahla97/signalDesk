@@ -21,7 +21,7 @@ export type Signal = {
   takeProfit: number | null;
   takeProfits: number[];
   timeframe: string | null;
-  status: 'OPEN' | 'CLOSED';
+  status: 'OPEN' | 'CLOSED' | 'DRAFT';
   result: string | null;
   closePrice: number | null;
   closedAt: string | null;
@@ -64,7 +64,6 @@ export type AppConfig = {
   websiteUrl: string;
   instagramUrl: string;
   supportEmail: string;
-  freePushPerDay: number;
   freeVisibleCount: number;
   historyDays: number;
   stats: { total: number; wins: number; losses: number; winRate: number };
@@ -80,7 +79,7 @@ export type NotificationPreferences = {
 export type PendingNotification = {
   jobId: number;
   type: 'TRADING_SIGNAL';
-  kind: 'NEW' | 'UPDATE';
+  kind: 'NEW' | 'UPDATE' | 'DELETE';
   revision: number;
   signalId: number;
   title: string;

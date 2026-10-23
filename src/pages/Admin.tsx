@@ -64,6 +64,24 @@ function cleanTakeProfits(values: string[]): number[] {
   return out;
 }
 
+function isSignalFormValid(form: {
+  symbol: string;
+  action: string;
+  market: string;
+  price: string;
+  stopLoss: string;
+  takeProfits: string[];
+}): boolean {
+  if (!form.symbol.trim()) return false;
+  if (!form.action) return false;
+  if (!form.market) return false;
+  const price = toNumberOrNull(form.price);
+  if (price === null || price <= 0) return false;
+  const sl = toNumberOrNull(form.stopLoss);
+  if (sl === null || sl <= 0) return false;
+  return cleanTakeProfits(form.takeProfits).length > 0;
+}
+
 /* ------------------------- multiple take profit rows ----------------------- */
 
 function TakeProfitEditor({
@@ -747,6 +765,125 @@ function EditSignalDialog({
   );
 }
 
+function ConfirmDialog({
+  title,
+  message,
+  confirmLabel = 'Delete',
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  message: string;
+  confirmLabel?: string;
+  onCancel: () => void;
+  onConfirm: () => void;
+}): React.ReactElement {
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Panel className="my-4 w-full max-w-md p-5">
+        <div className="flex items-start gap-3">
+          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-rose-500/15 text-rose-300">
+            <Trash2 className="h-5 w-5" aria-hidden="true" />
+          </span>
+          <div className="min-w-0">
+            <h3 className="text-base font-bold text-slate-100">{title}</h3>
+            <p className="mt-1 text-sm text-slate-400">{message}</p>
+          </div>
+        </div>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button variant="danger" onClick={onConfirm} testId="admin-confirm-delete">
+            {confirmLabel}
+          </Button>
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function CloseSignalDialog({
+  signal,
+  onClose,
+  onClosed,
+}: {
+  signal: Signal;
+  onClose: () => void;
+  onClosed: (message: string) => void;
+}): React.ReactElement {
+  const [price, setPrice] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function submit(e: FormEvent): Promise<void> {
+    e.preventDefault();
+    const closePrice = toNumberOrNull(price);
+    if (closePrice === null || closePrice <= 0) {
+      setError('Enter a valid close price.');
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    try {
+      await api(`/admin/signals/${signal.id}/close`, { method: 'POST', admin: true, body: { closePrice } });
+      onClosed('Signal closed.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not close the signal.');
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/70 p-3 sm:p-6"
+      role="dialog"
+      aria-modal="true"
+    >
+      <Panel className="my-4 w-full max-w-md p-5">
+        <div className="flex items-center gap-2">
+          <h3 className="text-base font-bold text-slate-100">Close {signal.symbol}</h3>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="ms-auto grid h-10 w-10 place-items-center rounded-xl border border-[#243049] text-slate-400 hover:bg-white/5"
+          >
+            <X className="h-4 w-4" aria-hidden="true" />
+          </button>
+        </div>
+        <form onSubmit={submit} className="mt-4 space-y-3">
+          <label className="block">
+            <span className="mb-1 block text-sm font-bold text-slate-200">Close price</span>
+            <input
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+              placeholder="0.00"
+              inputMode="decimal"
+              autoFocus
+              data-testid="admin-close-price-input"
+              className={inputClass}
+            />
+          </label>
+          {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+          <div className="flex justify-end gap-2">
+            <Button variant="ghost" onClick={onClose} disabled={busy}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={busy} testId="admin-close-confirm">
+              {busy ? 'Closing…' : 'Close signal'}
+            </Button>
+          </div>
+        </form>
+      </Panel>
+    </div>
+  );
+}
+
 function SignalsTab(): React.ReactElement {
   const [signals, setSignals] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
@@ -755,15 +892,20 @@ function SignalsTab(): React.ReactElement {
   const [editing, setEditing] = useState<Signal | null>(null);
   const [form, setForm] = useState({
     symbol: '',
-    action: 'BUY',
+    action: '',
+    market: '',
     price: '',
     stopLoss: '',
     takeProfits: [''] as string[],
     timeframe: '1h',
-    strategy: 'Manual',
+    strategy: '',
     note: '',
   });
   const [busy, setBusy] = useState(false);
+  const [confirm, setConfirm] = useState<{ type: 'signal' | 'samples'; id?: number; label?: string } | null>(
+    null,
+  );
+  const [closing, setClosing] = useState<Signal | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -788,12 +930,8 @@ function SignalsTab(): React.ReactElement {
     return () => window.clearTimeout(timer);
   }, [notice]);
 
-  async function create(e: FormEvent): Promise<void> {
-    e.preventDefault();
-    if (!form.symbol.trim()) {
-      setError('Symbol is required.');
-      return;
-    }
+  async function create(draft: boolean): Promise<void> {
+    if (!isSignalFormValid(form)) return;
     setBusy(true);
     setError(null);
     try {
@@ -803,6 +941,7 @@ function SignalsTab(): React.ReactElement {
         body: {
           symbol: form.symbol.trim().toUpperCase(),
           action: form.action,
+          market: form.market,
           price: toNumberOrNull(form.price),
           stopLoss: toNumberOrNull(form.stopLoss),
           takeProfits: cleanTakeProfits(form.takeProfits),
@@ -810,15 +949,26 @@ function SignalsTab(): React.ReactElement {
           strategy: form.strategy,
           note: form.note,
           time: new Date().toISOString(),
+          draft,
         },
       });
-      setForm({ ...form, symbol: '', price: '', stopLoss: '', takeProfits: [''], note: '' });
-      setNotice('Signal published and queued for delivery.');
+      setForm({ ...form, symbol: '', action: '', market: '', price: '', stopLoss: '', takeProfits: [''], strategy: '', note: '' });
+      setNotice(draft ? 'Draft saved.' : 'Signal published and queued for delivery.');
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not create the signal.');
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function publishDraft(id: number): Promise<void> {
+    try {
+      await api('/admin/signals/' + id + '/publish', { method: 'POST', admin: true });
+      setNotice('Signal published and queued for delivery.');
+      await load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not publish the draft.');
     }
   }
 
@@ -831,25 +981,25 @@ function SignalsTab(): React.ReactElement {
     }
   }
 
-  async function closeSignal(id: number, closePrice: string): Promise<void> {
-    try {
-      await api(`/admin/signals/${id}/close`, {
-        method: 'POST',
-        admin: true,
-        body: { closePrice: toNumberOrNull(closePrice) },
-      });
-      await load();
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not close the signal.');
-    }
-  }
-
   async function clearSamples(): Promise<void> {
     try {
       await api('/admin/sample-signals', { method: 'DELETE', admin: true });
       await load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not remove the sample data.');
+    }
+  }
+
+  async function confirmDelete(): Promise<void> {
+    if (!confirm) return;
+    try {
+      if (confirm.type === 'signal' && confirm.id !== undefined) {
+        await removeSignal(confirm.id);
+      } else if (confirm.type === 'samples') {
+        await clearSamples();
+      }
+    } finally {
+      setConfirm(null);
     }
   }
 
@@ -860,7 +1010,13 @@ function SignalsTab(): React.ReactElement {
         <p className="mt-1 text-xs text-slate-500">
           Goes through the same pipeline as a TradingView alert: saved, then queued for delivery.
         </p>
-        <form onSubmit={create} className="mt-3 space-y-3">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            void create(false);
+          }}
+          className="mt-3 space-y-3"
+        >
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <input
               value={form.symbol}
@@ -875,9 +1031,20 @@ function SignalsTab(): React.ReactElement {
               data-testid="admin-signal-action"
               className={inputClass}
             >
+              <option value="">Select action</option>
               <option value="BUY">BUY</option>
               <option value="SELL">SELL</option>
               <option value="CLOSE">CLOSE</option>
+            </select>
+            <select
+              value={form.market}
+              onChange={(e) => setForm({ ...form, market: e.target.value })}
+              data-testid="admin-signal-market"
+              className={inputClass}
+            >
+              <option value="">Select market</option>
+              <option value="CRYPTO">CRYPTO</option>
+              <option value="FOREX">FOREX</option>
             </select>
             <input
               value={form.price}
@@ -921,9 +1088,20 @@ function SignalsTab(): React.ReactElement {
             idPrefix="admin-signal"
           />
 
-          <Button type="submit" disabled={busy} testId="admin-signal-create">
-            {busy ? 'Publishing…' : 'Publish signal'}
-          </Button>
+          <div className="flex gap-2">
+            <Button type="submit" disabled={busy || !isSignalFormValid(form)} testId="admin-signal-create">
+              {busy ? 'Publishing…' : 'Publish signal'}
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              disabled={busy || !isSignalFormValid(form)}
+              onClick={() => void create(true)}
+              testId="admin-signal-draft"
+            >
+              Save as draft
+            </Button>
+          </div>
         </form>
       </Panel>
 
@@ -943,7 +1121,7 @@ function SignalsTab(): React.ReactElement {
           <RefreshCw className="h-4 w-4" aria-hidden="true" />
           Refresh
         </Button>
-        <Button variant="danger" onClick={() => void clearSamples()} testId="admin-clear-samples">
+        <Button variant="danger" onClick={() => setConfirm({ type: 'samples' })} testId="admin-clear-samples">
           <Trash2 className="h-4 w-4" aria-hidden="true" />
           Delete sample data
         </Button>
@@ -1002,6 +1180,16 @@ function SignalsTab(): React.ReactElement {
                     <td className="px-3 py-2 text-xs text-slate-500">{formatDateTime(s.signalTimestamp, 'UTC')}</td>
                     <td className="px-3 py-2">
                       <div className="flex gap-2">
+                        {s.status === 'DRAFT' ? (
+                          <button
+                            type="button"
+                            onClick={() => void publishDraft(s.id)}
+                            data-testid={`admin-publish-${s.id}`}
+                            className="min-h-9 rounded-lg border border-emerald-500/30 px-3 text-xs font-bold text-emerald-200 hover:bg-emerald-500/10"
+                          >
+                            Publish
+                          </button>
+                        ) : null}
                         <button
                           type="button"
                           onClick={() => setEditing(s)}
@@ -1013,10 +1201,7 @@ function SignalsTab(): React.ReactElement {
                         {s.status === 'OPEN' ? (
                           <button
                             type="button"
-                            onClick={() => {
-                              const value = window.prompt('Close price for ' + s.symbol + '?') ?? '';
-                              void closeSignal(s.id, value);
-                            }}
+                            onClick={() => setClosing(s)}
                             data-testid={`admin-close-${s.id}`}
                             className="min-h-9 rounded-lg border border-[#243049] px-3 text-xs font-bold text-slate-300 hover:bg-white/5"
                           >
@@ -1025,7 +1210,7 @@ function SignalsTab(): React.ReactElement {
                         ) : null}
                         <button
                           type="button"
-                          onClick={() => void removeSignal(s.id)}
+                          onClick={() => setConfirm({ type: 'signal', id: s.id, label: s.symbol ?? undefined })}
                           data-testid={`admin-delete-${s.id}`}
                           className="min-h-9 rounded-lg border border-rose-500/30 px-3 text-xs font-bold text-rose-300 hover:bg-rose-500/10"
                         >
@@ -1051,6 +1236,35 @@ function SignalsTab(): React.ReactElement {
           onClose={() => setEditing(null)}
           onSaved={(message) => {
             setEditing(null);
+            setNotice(message);
+            void load();
+          }}
+        />
+      ) : null}
+
+      {confirm ? (
+        <ConfirmDialog
+          title={
+            confirm.type === 'samples'
+              ? 'Delete sample data?'
+              : `Delete signal${confirm.label ? ' ' + confirm.label : ''}?`
+          }
+          message={
+            confirm.type === 'samples'
+              ? 'This permanently removes the sample signals shipped with the app. This cannot be undone.'
+              : 'This permanently removes the signal and notifies its followers it was deleted. This cannot be undone.'
+          }
+          onCancel={() => setConfirm(null)}
+          onConfirm={() => void confirmDelete()}
+        />
+      ) : null}
+
+      {closing ? (
+        <CloseSignalDialog
+          signal={closing}
+          onClose={() => setClosing(null)}
+          onClosed={(message) => {
+            setClosing(null);
             setNotice(message);
             void load();
           }}
@@ -1120,8 +1334,8 @@ function LogsTab(): React.ReactElement {
                       {d.action} {d.symbol}
                     </td>
                     <td className="px-3 py-2">
-                      <Badge tone={d.kind === 'UPDATE' ? 'warn' : 'neutral'}>
-                        {d.kind === 'UPDATE' ? `UPDATE r${d.revision ?? 0}` : 'NEW'}
+                      <Badge tone={d.kind === 'UPDATE' ? 'warn' : d.kind === 'DELETE' ? 'sell' : 'neutral'}>
+                        {d.kind === 'UPDATE' ? `UPDATE r${d.revision ?? 0}` : d.kind === 'DELETE' ? 'DELETE' : 'NEW'}
                       </Badge>
                     </td>
                     <td className="px-3 py-2 font-mono text-xs text-slate-500">{d.device_id}</td>
@@ -1236,7 +1450,6 @@ function SettingsTab(): React.ReactElement {
   if (!settings) return <Skeleton className="h-60 w-full" />;
 
   const fields: { key: string; label: string; hint?: string }[] = [
-    { key: 'free_push_per_day', label: 'Free push notifications per day' },
     { key: 'free_visible_count', label: 'Unlocked signals for free users' },
     { key: 'history_days', label: 'Closed history window (days)' },
     { key: 'telegram_url', label: 'Telegram link' },

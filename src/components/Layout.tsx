@@ -35,18 +35,21 @@ function Toasts(): React.ReactElement | null {
           data-testid={`toast-${toast.signalId}`}
           className={
             'pointer-events-auto flex w-full max-w-md items-center gap-3 rounded-2xl border bg-[#0f1726] p-3 shadow-xl ' +
-            (toast.kind === 'UPDATE' ? 'border-amber-500/40' : 'border-sky-500/30')
+            (toast.kind === 'UPDATE' ? 'border-amber-500/40' : toast.kind === 'DELETE' ? 'border-rose-500/40' : 'border-sky-500/30')
           }
         >
           <Bell
-            className={'h-5 w-5 shrink-0 ' + (toast.kind === 'UPDATE' ? 'text-amber-300' : 'text-sky-300')}
+            className={
+              'h-5 w-5 shrink-0 ' +
+              (toast.kind === 'UPDATE' ? 'text-amber-300' : toast.kind === 'DELETE' ? 'text-rose-300' : 'text-sky-300')
+            }
             aria-hidden="true"
           />
           <button
             type="button"
             onClick={() => {
               dismissToast(toast.id);
-              navigate('/signal/' + toast.signalId);
+              if (toast.kind !== 'DELETE') navigate('/signal/' + toast.signalId);
             }}
             className="min-w-0 flex-1 text-left"
           >

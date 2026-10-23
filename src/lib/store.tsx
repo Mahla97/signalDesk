@@ -37,13 +37,12 @@ const DEFAULT_CONFIG: AppConfig = {
   websiteUrl: 'https://signaldesk.example.com',
   instagramUrl: 'https://instagram.com/signaldesk',
   supportEmail: 'support@signaldesk.example.com',
-  freePushPerDay: 2,
   freeVisibleCount: 3,
   historyDays: 14,
   stats: { total: 0, wins: 0, losses: 0, winRate: 0 },
 };
 
-type Toast = { id: number; title: string; body: string; signalId: number; kind: 'NEW' | 'UPDATE' };
+type Toast = { id: number; title: string; body: string; signalId: number; kind: 'NEW' | 'UPDATE' | 'DELETE' };
 
 type Store = {
   ready: boolean;
@@ -53,8 +52,8 @@ type Store = {
   config: AppConfig;
   user: AppUser | null;
   isPro: boolean;
-  freePushUsedToday: number;
   toasts: Toast[];
+  signalTick: number;
   completeOnboarding: (timezone: string) => void;
   setTimezone: (timezone: string) => void;
   setPrefs: (prefs: NotificationPreferences) => void;
@@ -76,14 +75,14 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
   );
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [user, setUser] = useState<AppUser | null>(null);
-  const [freePushUsedToday, setFreePushUsedToday] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [signalTick, setSignalTick] = useState(0);
   const registered = useRef(false);
 
   const registerDevice = useCallback(
     async (nextPrefs: NotificationPreferences, tz: string) => {
       try {
-        const res = await api<{ id: number; freePushUsedToday: number }>('/devices/push-token', {
+        await api<{ id: number }>('/devices/push-token', {
           method: 'POST',
           body: {
             token: deviceToken(),
@@ -93,7 +92,6 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
             preferences: nextPrefs,
           },
         });
-        setFreePushUsedToday(res.freePushUsedToday ?? 0);
       } catch (err) {
         console.warn('device registration failed', err);
       }
@@ -107,11 +105,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       return;
     }
     try {
-      const res = await api<{ user: AppUser | null; device: { freePushUsedToday: number } | null }>(
-        '/auth/me',
-      );
+      const res = await api<{ user: AppUser | null; device: { id: number } | null }>('/auth/me');
       setUser(res.user);
-      if (res.device) setFreePushUsedToday(res.device.freePushUsedToday);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         remove(KEYS.session);
@@ -168,6 +163,7 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
               kind: message.kind,
             },
           ]);
+          setSignalTick((t) => t + 1);
           void refreshUser();
         },
       }).then((cleanup) => {
@@ -188,9 +184,10 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
           title: i.title,
           body: i.body,
           signalId: i.signalId,
-          kind: i.kind === 'UPDATE' ? ('UPDATE' as const) : ('NEW' as const),
+          kind: i.kind === 'UPDATE' ? ('UPDATE' as const) : i.kind === 'DELETE' ? ('DELETE' as const) : ('NEW' as const),
         })),
       ]);
+      setSignalTick((t) => t + 1);
       void refreshUser();
     });
     return stop;
@@ -279,8 +276,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       config,
       user,
       isPro: user?.plan === 'PRO' && !user.suspended,
-      freePushUsedToday,
       toasts,
+      signalTick,
       completeOnboarding,
       setTimezone,
       setPrefs,
@@ -297,8 +294,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       prefs,
       config,
       user,
-      freePushUsedToday,
       toasts,
+      signalTick,
       completeOnboarding,
       setTimezone,
       setPrefs,

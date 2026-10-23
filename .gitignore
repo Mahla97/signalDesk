@@ -20,6 +20,10 @@ server/data/
 # NOT secret — it ships inside the app on purpose, so it is not ignored.
 service-account*.json
 *service-account*.json
+*firebase-adminsdk*.json
+
+# Local notes with credentials
+docs/data.txt
 
 
 # Logs

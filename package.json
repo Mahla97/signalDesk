@@ -8,7 +8,8 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "tsx server/index.ts",
-    "test:api": "tsx server/tests/api.test.ts"
+    "test:api": "tsx server/tests/api.test.ts",
+    "test:admin": "tsx server/tests/admin-signals.test.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.5.1",

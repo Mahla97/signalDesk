@@ -47,7 +47,7 @@ function Toggle({
 }
 
 export default function Settings(): React.ReactElement {
-  const { timezone, setTimezone, prefs, setPrefs, config, isPro, freePushUsedToday } = useStore();
+  const { timezone, setTimezone, prefs, setPrefs, config, isPro } = useStore();
   const [saved, setSaved] = useState(false);
 
   function update(patch: Partial<NotificationPreferences>): void {
@@ -119,7 +119,7 @@ export default function Settings(): React.ReactElement {
         <p className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-400" data-testid="settings-quota">
           {isPro
             ? 'Pro plan: you receive every signal in real time.'
-            : `Free plan: up to ${config.freePushPerDay} alerts per day (${freePushUsedToday} used today). Pro members get all of them.`}
+            : `Free plan: the first ${config.freeVisibleCount} signals of the day are unlocked; the rest are blurred.`}
         </p>
 
         <p className="mt-2 flex items-start gap-2 text-xs text-slate-500">
