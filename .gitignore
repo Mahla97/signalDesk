@@ -16,6 +16,16 @@ server/data/
 .env.*
 !.env.example
 
+# Firebase service-account keys (server-only secret). google-services.json is
+# NOT secret — it ships inside the app on purpose, so it is not ignored.
+service-account*.json
+*service-account*.json
+*firebase-adminsdk*.json
+
+# Local notes with credentials
+docs/data.txt
+
+
 # Logs
 *.log
 npm-debug.log*

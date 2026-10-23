@@ -12,9 +12,10 @@ function ActionIcon({ action }: { action: string | null }): React.ReactElement {
 
 export function LockedSignalCard({ signal }: { signal: Signal }): React.ReactElement {
   return (
-    <div
+    <Link
+      to="/contact"
       data-testid={`signal-locked-${signal.id}`}
-      className="relative overflow-hidden rounded-2xl border border-[#1d2739] bg-[#0f1522] p-4"
+      className="group relative block overflow-hidden rounded-2xl border border-[#1d2739] bg-[#0f1522] p-4 transition hover:border-sky-500/40 focus:outline-none focus-visible:ring-2 focus-visible:ring-sky-400"
     >
       <div className="sd-blur" aria-hidden="true">
         <div className="flex items-center justify-between gap-3">
@@ -27,18 +28,16 @@ export function LockedSignalCard({ signal }: { signal: Signal }): React.ReactEle
         <p className="mt-1 text-sm text-slate-500">Strategy • 1h</p>
       </div>
 
-      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-[#0b101b]/55 px-4 text-center">
-        <Lock className="h-5 w-5 text-sky-300" aria-hidden="true" />
-        <p className="text-sm font-bold text-slate-100">Pro required</p>
-        <Link
-          to="/contact"
-          data-testid={`unlock-cta-${signal.id}`}
-          className="inline-flex min-h-9 items-center rounded-lg border border-sky-400/30 bg-sky-500/15 px-3 text-xs font-bold text-sky-200 transition hover:bg-sky-500/25"
-        >
-          How to get Pro
-        </Link>
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0b101b]/70 px-3 py-1.5 text-xs font-semibold text-slate-300 backdrop-blur">
+          <Lock className="h-3.5 w-3.5 text-sky-300" aria-hidden="true" />
+          Pro required
+          <span className="text-sky-300 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
+            →
+          </span>
+        </span>
       </div>
-    </div>
+    </Link>
   );
 }
 

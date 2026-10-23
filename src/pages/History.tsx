@@ -5,7 +5,7 @@ import { useStore } from '../lib/store';
 
 export default function History(): React.ReactElement {
   const { timezone, config } = useStore();
-  const { items, loading, loadingMore, error, hasMore, total, loadMore, reload } = useSignals('closed');
+  const { items, loading, loadingMore, error, hasMore, total, loadMore, reload } = useSignals('closed', 10);
 
   const wins = items.filter((i) => (i.pnlPercent ?? 0) > 0 || i.result === 'TP').length;
   const losses = items.filter((i) => (i.pnlPercent ?? 0) < 0 || i.result === 'SL').length;

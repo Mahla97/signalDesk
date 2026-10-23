@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SignalDesk</string>
+    <string name="title_activity_main">SignalDesk</string>
+    <string name="package_name">com.signaldesk.app</string>
+    <string name="custom_url_scheme">com.signaldesk.app</string>
+</resources>

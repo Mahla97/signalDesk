@@ -56,7 +56,7 @@ signal service do not change.
 | `TRADINGVIEW_WEBHOOK_SECRET` | **yes in production** | `change-me-tradingview-secret` | Shared secret checked with a constant-time compare. |
 | `ADMIN_USERNAME` | no | `admin` | Only read on the very first boot. |
 | `ADMIN_PASSWORD` | no | `Kx7-Panel-Trade-92` | Only read on the very first boot; stored hashed. |
-| `FCM_SERVER_KEY` | no | — | When set, deliveries are pushed to Firebase Cloud Messaging; otherwise they are queued for the device to pull. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | no | — | Path to the Firebase service-account JSON. When set, deliveries are pushed via FCM HTTP v1; otherwise they are queued for the device to pull. |
 
 Secrets are never logged. The webhook logs record the outcome and the caller,
 never the token itself.
@@ -144,11 +144,12 @@ Responses: `202` accepted · `200 {duplicate:true}` replay · `401` bad secret �
 A push is queued for a device only when **all** hold:
 plan is PRO with `proEndAt` in the future · not suspended · notifications
 enabled · trading signals enabled · the BUY/SELL preference matches the action.
-Free devices are also allowed, capped at `free_push_per_day` (default 2, UTC day).
+Free devices are always allowed; the push text is generic when they are past the
+`free_visible_count` window.
 
-In-app reading: free viewers see the newest `free_visible_count` open signals in
-full (default 3); the rest are blurred and locked, and `GET /api/signals/:id`
-returns 403 for them. **Closed history is unlocked for everyone** for
+In-app reading: free viewers see the first `free_visible_count` open signals of
+the current day in full (default 3); the rest are blurred and locked, and
+`GET /api/signals/:id` returns 403 for them. **Closed history is unlocked for everyone** for
 `history_days` days (default 14). All three values are editable in the admin panel.
 
 ---
@@ -210,8 +211,7 @@ npm run test:api      # shell 2
 | Admin | unauthenticated 401 · wrong credentials 401 · login · list users · grant PRO with duration · downgrade · read logs |
 | Queue | notification queued for the device · payload carries `type=TRADING_SIGNAL` + `signalId` · ack removes it |
 
-Manual checks worth running once: set the free daily cap to 1 in the admin
-panel, publish two signals, and confirm the second is logged as
-`SKIPPED / free_daily_limit`; grant a user 7 days of Pro and confirm the profile
-countdown; wait for a `proEndAt` to pass and confirm the minute-interval job
-downgrades the account.
+Manual checks worth running once: set `free_visible_count` to 1, publish two
+signals, and confirm the second is blurred and its push is generic; grant a user
+7 days of Pro and confirm the profile countdown; wait for a `proEndAt` to pass
+and confirm the minute-interval job downgrades the account.

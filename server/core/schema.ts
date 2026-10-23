@@ -22,7 +22,7 @@ CREATE TABLE IF NOT EXISTS delivery_jobs (
   created_at TEXT NOT NULL,
   sent_at TEXT,
   delivered_at TEXT,
-  UNIQUE (signal_id, device_id, revision),
+  UNIQUE (signal_id, device_id, revision, kind),
   FOREIGN KEY (signal_id) REFERENCES signals(id) ON DELETE CASCADE
 );
 
@@ -61,6 +61,7 @@ CREATE TABLE IF NOT EXISTS admin_tokens (
 CREATE TABLE IF NOT EXISTS devices (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   token TEXT NOT NULL UNIQUE,
+  push_token TEXT,
   user_id INTEGER,
   platform TEXT NOT NULL DEFAULT 'android',
   notifications_enabled INTEGER NOT NULL DEFAULT 1,
@@ -97,7 +98,8 @@ CREATE TABLE IF NOT EXISTS signals (
   edit_count INTEGER NOT NULL DEFAULT 0,
   signal_timestamp TEXT NOT NULL,
   received_at TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  deleted_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_signals_external ON signals(external_signal_id);
@@ -138,7 +140,6 @@ CREATE TABLE IF NOT EXISTS settings (
 `;
 
 export const DEFAULT_SETTINGS: Record<string, string> = {
-  free_push_per_day: '2',
   free_visible_count: '3',
   history_days: '14',
   telegram_url: 'https://t.me/signaldesk',
@@ -221,6 +222,37 @@ function migrateDeliveryJobs(): void {
     console.log('[migrate] rebuilt delivery_jobs with kind + revision');
   } catch (err) {
     console.error('[migrate] delivery_jobs rebuild failed', err);
+  }
+}
+
+/**
+ * The original UNIQUE(signal_id, device_id, revision) made a DELETE delivery
+ * collide with the original NEW delivery (both revision 0). The key must include
+ * kind so a signal's NEW, UPDATE and DELETE deliveries can coexist. Rebuild the
+ * table when the old three-column key is still in place.
+ */
+function migrateDeliveryJobKindUnique(): void {
+  const meta = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'delivery_jobs'")
+    .get() as { sql: string } | undefined;
+  if (!meta || !meta.sql.includes('UNIQUE (signal_id, device_id, revision)')) return;
+  try {
+    db.exec('ALTER TABLE delivery_jobs RENAME TO delivery_jobs_old');
+    db.exec('DROP INDEX IF EXISTS idx_jobs_pending');
+    db.exec('DROP INDEX IF EXISTS idx_jobs_device');
+    db.exec(DELIVERY_JOBS_SQL);
+    db.exec(`
+      INSERT INTO delivery_jobs
+        (id, signal_id, device_id, user_id, kind, revision, status, reason, attempts,
+         next_attempt_at, last_error, created_at, sent_at, delivered_at)
+      SELECT id, signal_id, device_id, user_id, kind, revision, status, reason, attempts,
+             next_attempt_at, last_error, created_at, sent_at, delivered_at
+      FROM delivery_jobs_old
+    `);
+    db.exec('DROP TABLE delivery_jobs_old');
+    console.log('[migrate] rebuilt delivery_jobs with kind in the unique key');
+  } catch (err) {
+    console.error('[migrate] delivery_jobs uniqueness rebuild failed', err);
   }
 }
 
@@ -318,7 +350,10 @@ export function initDatabase(): void {
   ensureColumn('signals', 'take_profits', 'TEXT');
   ensureColumn('signals', 'edited_at', 'TEXT');
   ensureColumn('signals', 'edit_count', 'INTEGER NOT NULL DEFAULT 0');
+  ensureColumn('signals', 'deleted_at', 'TEXT');
+  ensureColumn('devices', 'push_token', 'TEXT');
   migrateDeliveryJobs();
+  migrateDeliveryJobKindUnique();
   backfillTakeProfits();
 
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {

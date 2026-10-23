@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!--
+      Debug builds only. Lets the app reach a local HTTP backend during
+      development (e.g. http://10.0.2.2:3001 from the emulator). The release
+      build never merges this, so shipped builds stay HTTPS-only.
+      See VITE_API_BASE_URL in src/lib/api.ts.
+    -->
+    <application android:usesCleartextTraffic="true" />
+</manifest>

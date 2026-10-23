@@ -8,20 +8,25 @@
     "build": "vite build",
     "preview": "vite preview",
     "server": "tsx server/index.ts",
-    "test:api": "tsx server/tests/api.test.ts"
+    "test:api": "tsx server/tests/api.test.ts",
+    "test:admin": "tsx server/tests/admin-signals.test.ts"
   },
   "dependencies": {
+    "@capacitor-firebase/messaging": "^8.5.1",
+    "@capacitor/android": "^8.5.2",
+    "@capacitor/cli": "^8.5.2",
+    "@capacitor/core": "^8.5.2",
+    "lucide-react": "^0.469.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
-    "react-router-dom": "^7.1.1",
-    "lucide-react": "^0.469.0"
+    "react-router-dom": "^7.1.1"
   },
   "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
     "@types/react-dom": "^19.0.2",
     "@vitejs/plugin-react": "^4.3.4",
-    "@tailwindcss/vite": "^4.0.0",
     "tailwindcss": "^4.0.0",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",

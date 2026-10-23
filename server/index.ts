@@ -3,7 +3,6 @@ import { db } from './lib/db.js';
 import {
   allSettings,
   getSetting,
-  getSettingNumber,
   initDatabase,
   setSetting,
 } from './core/schema.js';
@@ -33,14 +32,14 @@ import {
   listSignals,
   performanceStats,
   publicSignal,
+  publishSignal,
   rawPublicSignal,
   updateSignal,
   type SignalPatch,
 } from './core/signals.js';
 import {
-  buildNotification,
+  buildNotificationForDevice,
   enqueueSignalDistribution,
-  freePushUsedToday,
   markDelivered,
   pendingForDevice,
   startWorker,
@@ -137,7 +136,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       websiteUrl: s.website_url,
       instagramUrl: s.instagram_url,
       supportEmail: s.support_email,
-      freePushPerDay: Number(s.free_push_per_day),
       freeVisibleCount: Number(s.free_visible_count),
       historyDays: Number(s.history_days),
       stats: performanceStats(),
@@ -218,6 +216,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const user = currentUser(req);
     const platform = toStr(body.platform, 20) ?? 'web';
     const timezone = toStr(body.timezone, 60);
+    // The install identity (`token`, sent back as x-device-token) is stable; the
+    // FCM registration token (`pushToken`) rotates and is only the delivery target.
+    const pushToken = toStr(body.pushToken, 4096);
     const prefs = (body.preferences ?? {}) as Record<string, unknown>;
     const bool = (v: unknown, fallback = 1) => (v === undefined ? fallback : v ? 1 : 0);
     const now = nowIso();
@@ -229,6 +230,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     if (existing) {
       db.prepare(
         `UPDATE devices SET user_id = ?, platform = ?, timezone = ?, disabled = 0, last_seen_at = ?,
+           push_token = COALESCE(?, push_token),
            notifications_enabled = ?, trading_signals_enabled = ?, buy_signals_enabled = ?, sell_signals_enabled = ?
          WHERE id = ?`,
       ).run(
@@ -236,6 +238,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         platform,
         timezone ?? existing.timezone,
         now,
+        pushToken,
         bool(prefs.tradingNotificationsEnabled ?? prefs.notificationsEnabled, existing.notifications_enabled),
         bool(prefs.tradingSignalsEnabled, existing.trading_signals_enabled),
         bool(prefs.buySignalsEnabled, existing.buy_signals_enabled),
@@ -245,11 +248,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     } else {
       db.prepare(
         `INSERT INTO devices
-           (token, user_id, platform, timezone, notifications_enabled, trading_signals_enabled,
+           (token, push_token, user_id, platform, timezone, notifications_enabled, trading_signals_enabled,
             buy_signals_enabled, sell_signals_enabled, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         token,
+        pushToken,
         user ? user.id : null,
         platform,
         timezone,
@@ -272,8 +276,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         buySignalsEnabled: Boolean(device.buy_signals_enabled),
         sellSignalsEnabled: Boolean(device.sell_signals_enabled),
       },
-      freePushUsedToday: freePushUsedToday(device.id),
-      freePushPerDay: getSettingNumber('free_push_per_day', 2),
     });
     return;
   }
@@ -305,7 +307,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       .map((p) => {
         const signal = getSignalById(p.signalId);
         if (!signal) return null;
-        const content = buildNotification(signal, p.kind, p.revision);
+        const content = buildNotificationForDevice(device.id, signal, p.kind, p.revision);
         return {
           jobId: p.jobId,
           type: 'TRADING_SIGNAL' as const,
@@ -366,7 +368,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     const row = getSignalById(id);
-    if (!row) {
+    if (!row || row.deleted_at) {
       sendJson(res, 404, { error: 'signal not found' });
       return;
     }
@@ -478,8 +480,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       device: device
         ? {
             id: device.id,
-            freePushUsedToday: freePushUsedToday(device.id),
-            freePushPerDay: getSettingNumber('free_push_per_day', 2),
           }
         : null,
     });
@@ -657,18 +657,45 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       sendJson(res, 400, { error: 'invalid json body' });
       return;
     }
+    const isDraft = Boolean(body.draft);
     const payload = { ...body, id: toStr(body.id, 120) ?? 'manual-' + randomToken(8) };
     const result = ingestWebhookPayload(payload);
     if (!result.ok) {
       sendJson(res, 422, { error: result.error });
       return;
     }
-    sendJson(res, 201, { signal: rawPublicSignal(result.signal) });
+    if (isDraft) {
+      db.prepare("UPDATE signals SET status = 'DRAFT' WHERE id = ?").run(result.signal.id);
+    }
+    const created = getSignalById(result.signal.id)!;
+    sendJson(res, 201, { signal: rawPublicSignal(created) });
+    if (!isDraft) {
+      setImmediate(() => {
+        try {
+          enqueueSignalDistribution(result.signal.id);
+        } catch (err) {
+          console.error('[admin] distribution failed', err);
+        }
+      });
+    }
+    return;
+  }
+
+  params = match('/api/admin/signals/:id/publish', path);
+  if (method === 'POST' && params) {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(params.id);
+    const signal = publishSignal(id);
+    if (!signal) {
+      sendJson(res, 404, { error: 'draft not found' });
+      return;
+    }
+    sendJson(res, 200, { signal: rawPublicSignal(signal) });
     setImmediate(() => {
       try {
-        enqueueSignalDistribution(result.signal.id);
+        enqueueSignalDistribution(id);
       } catch (err) {
-        console.error('[admin] distribution failed', err);
+        console.error('[admin] publish distribution failed for signal', id, err);
       }
     });
     return;
@@ -769,8 +796,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   params = match('/api/admin/signals/:id', path);
   if (method === 'DELETE' && params) {
     if (!requireAdmin(req, res)) return;
-    deleteSignal(Number(params.id));
-    sendJson(res, 200, { ok: true });
+    const id = Number(params.id);
+    const removed = deleteSignal(id);
+    sendJson(res, 200, { ok: true, removed: Boolean(removed) });
+    if (removed) {
+      setImmediate(() => {
+        try {
+          enqueueSignalDistribution(id, { kind: 'DELETE' });
+        } catch (err) {
+          console.error('[admin] delete distribution failed for signal', id, err);
+        }
+      });
+    }
     return;
   }
 
@@ -817,7 +854,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     const allowed = [
-      'free_push_per_day',
       'free_visible_count',
       'history_days',
       'telegram_url',

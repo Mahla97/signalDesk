@@ -9,9 +9,20 @@ import {
   type ReactNode,
 } from 'react';
 import { api, ApiError } from './api';
-import { KEYS, deviceToken, read, readJson, remove, write, writeJson } from './storage';
+import {
+  KEYS,
+  deviceToken,
+  pushToken,
+  read,
+  readJson,
+  remove,
+  setPushToken,
+  write,
+  writeJson,
+} from './storage';
 import { deviceTimezone } from './time';
 import { requestPushPermission, startPushPolling } from './push';
+import { isNativePlatform, nativePlatformName, registerNativePush } from './nativePush';
 import type { AppConfig, AppUser, NotificationPreferences, PendingNotification } from './types';
 
 const DEFAULT_PREFS: NotificationPreferences = {
@@ -26,13 +37,12 @@ const DEFAULT_CONFIG: AppConfig = {
   websiteUrl: 'https://signaldesk.example.com',
   instagramUrl: 'https://instagram.com/signaldesk',
   supportEmail: 'support@signaldesk.example.com',
-  freePushPerDay: 2,
   freeVisibleCount: 3,
   historyDays: 14,
   stats: { total: 0, wins: 0, losses: 0, winRate: 0 },
 };
 
-type Toast = { id: number; title: string; body: string; signalId: number; kind: 'NEW' | 'UPDATE' };
+type Toast = { id: number; title: string; body: string; signalId: number; kind: 'NEW' | 'UPDATE' | 'DELETE' };
 
 type Store = {
   ready: boolean;
@@ -42,8 +52,8 @@ type Store = {
   config: AppConfig;
   user: AppUser | null;
   isPro: boolean;
-  freePushUsedToday: number;
   toasts: Toast[];
+  signalTick: number;
   completeOnboarding: (timezone: string) => void;
   setTimezone: (timezone: string) => void;
   setPrefs: (prefs: NotificationPreferences) => void;
@@ -65,23 +75,23 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
   );
   const [config, setConfig] = useState<AppConfig>(DEFAULT_CONFIG);
   const [user, setUser] = useState<AppUser | null>(null);
-  const [freePushUsedToday, setFreePushUsedToday] = useState(0);
   const [toasts, setToasts] = useState<Toast[]>([]);
+  const [signalTick, setSignalTick] = useState(0);
   const registered = useRef(false);
 
   const registerDevice = useCallback(
     async (nextPrefs: NotificationPreferences, tz: string) => {
       try {
-        const res = await api<{ id: number; freePushUsedToday: number }>('/devices/push-token', {
+        await api<{ id: number }>('/devices/push-token', {
           method: 'POST',
           body: {
             token: deviceToken(),
-            platform: 'android',
+            pushToken: pushToken(),
+            platform: nativePlatformName(),
             timezone: tz,
             preferences: nextPrefs,
           },
         });
-        setFreePushUsedToday(res.freePushUsedToday ?? 0);
       } catch (err) {
         console.warn('device registration failed', err);
       }
@@ -95,11 +105,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       return;
     }
     try {
-      const res = await api<{ user: AppUser | null; device: { freePushUsedToday: number } | null }>(
-        '/auth/me',
-      );
+      const res = await api<{ user: AppUser | null; device: { id: number } | null }>('/auth/me');
       setUser(res.user);
-      if (res.device) setFreePushUsedToday(res.device.freePushUsedToday);
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
         remove(KEYS.session);
@@ -134,6 +141,41 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
   }, []);
 
   useEffect(() => {
+    // Native shell: FCM delivers (and the OS displays) the notification, so there
+    // is nothing to poll — we only register the token and toast foreground items.
+    // Web: drain the backend queue while the tab is open.
+    if (isNativePlatform()) {
+      let cancelled = false;
+      let stop: (() => void) | null = null;
+      void registerNativePush({
+        onToken: (token) => {
+          setPushToken(token);
+          void registerDevice(prefs, timezone);
+        },
+        onMessage: (message) => {
+          setToasts((current) => [
+            ...current,
+            {
+              id: Date.now(),
+              title: message.title,
+              body: message.body,
+              signalId: message.signalId ?? 0,
+              kind: message.kind,
+            },
+          ]);
+          setSignalTick((t) => t + 1);
+          void refreshUser();
+        },
+      }).then((cleanup) => {
+        if (cancelled) cleanup();
+        else stop = cleanup;
+      });
+      return () => {
+        cancelled = true;
+        stop?.();
+      };
+    }
+
     const stop = startPushPolling((items: PendingNotification[]) => {
       setToasts((current) => [
         ...current,
@@ -142,13 +184,14 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
           title: i.title,
           body: i.body,
           signalId: i.signalId,
-          kind: i.kind === 'UPDATE' ? ('UPDATE' as const) : ('NEW' as const),
+          kind: i.kind === 'UPDATE' ? ('UPDATE' as const) : i.kind === 'DELETE' ? ('DELETE' as const) : ('NEW' as const),
         })),
       ]);
+      setSignalTick((t) => t + 1);
       void refreshUser();
     });
     return stop;
-  }, [refreshUser]);
+  }, [refreshUser, registerDevice, prefs, timezone]);
 
   useEffect(() => {
     if (toasts.length === 0) return;
@@ -233,8 +276,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       config,
       user,
       isPro: user?.plan === 'PRO' && !user.suspended,
-      freePushUsedToday,
       toasts,
+      signalTick,
       completeOnboarding,
       setTimezone,
       setPrefs,
@@ -251,8 +294,8 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       prefs,
       config,
       user,
-      freePushUsedToday,
       toasts,
+      signalTick,
       completeOnboarding,
       setTimezone,
       setPrefs,

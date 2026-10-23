@@ -1,5 +1,6 @@
 export const KEYS = {
   device: 'sd.deviceToken',
+  push: 'sd.pushToken',
   session: 'sd.sessionToken',
   timezone: 'sd.timezone',
   onboarded: 'sd.onboarded',
@@ -51,11 +52,20 @@ function randomId(): string {
   return 'dev-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-/** Stable per-install identifier that stands in for the push token. */
+/** Stable per-install identifier. Survives FCM token rotation. */
 export function deviceToken(): string {
   const existing = read(KEYS.device);
   if (existing) return existing;
   const token = randomId();
   write(KEYS.device, token);
   return token;
+}
+
+/** The current FCM registration token, if the native push plugin has issued one. */
+export function pushToken(): string | null {
+  return read(KEYS.push);
+}
+
+export function setPushToken(token: string): void {
+  write(KEYS.push, token);
 }

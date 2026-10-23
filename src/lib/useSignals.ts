@@ -4,7 +4,7 @@ import type { Signal, SignalPage } from './types';
 
 type Status = 'open' | 'closed' | 'all';
 
-export function useSignals(status: Status, pageSize = 15) {
+export function useSignals(status: Status, pageSize = 15, refreshKey = 0) {
   const [items, setItems] = useState<Signal[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -51,6 +51,17 @@ export function useSignals(status: Status, pageSize = 15) {
     }, 30000);
     return () => window.clearInterval(timer);
   }, [status, fetchPage]);
+
+  // Reload immediately when a push/poll delivers a new (or updated) signal,
+  // instead of waiting for the 30s timer above.
+  const skipFirstRefresh = useRef(true);
+  useEffect(() => {
+    if (skipFirstRefresh.current) {
+      skipFirstRefresh.current = false;
+      return;
+    }
+    void fetchPage(1, false);
+  }, [refreshKey, fetchPage]);
 
   const loadMore = useCallback(() => {
     void fetchPage(pageRef.current + 1, true);

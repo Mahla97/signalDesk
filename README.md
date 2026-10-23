@@ -14,7 +14,7 @@ staff management panel.
 1. [Feature overview](#2-feature-overview)
 2. [Tech stack](#3-tech-stack)
 3. [Folder structure](#4-folder-structure)
-4. [Local setup](#5-local-setup)
+4. [Running it locally (demo)](#5-running-it-locally-demo)
 5. [Environment variables](#6-environment-variables)
 6. [Database & migrations](#7-database--migrations)
 7. [Key flows](#8-key-flows)
@@ -22,7 +22,7 @@ staff management panel.
 9. [API reference](#10-api-reference)
 10. [TradingView webhook setup](#11-tradingview-webhook-setup)
 11. [Admin panel](#12-admin-panel)
-12. [Tests](#13-tests)
+12. [Testing](#13-testing)
 13. [Production deployment](#14-production-deployment)
 14. [Troubleshooting](#15-troubleshooting)
 
@@ -35,7 +35,7 @@ staff management panel.
 | Screen | What it does |
 | --- | --- |
 | First run | Risk disclaimer acknowledgement + timezone selection (defaults to the device timezone) |
-| Signals | Live feed, newest first. Free users see the newest N in full, the rest blurred/locked |
+| Signals | Live feed, newest first. Free users see the first N open signals of the day in full, the rest blurred/locked |
 | Signal details | Entry, stop loss, **all take-profit levels**, timing in the user's timezone, change history |
 | History | Closed signals from the last 14 days, with result and P/L, paginated |
 | Calculator | Position-size / risk calculator for crypto (units) and forex (lots) |
@@ -66,7 +66,7 @@ staff flip the plan in the admin panel.
 | Icons | lucide-react |
 | Backend | Node.js `node:http` (no framework), TypeScript, run with `tsx` |
 | Database | SQLite via `node:sqlite` (synchronous, WAL mode) |
-| Push | Pull-based device queue; optional FCM transport when `FCM_SERVER_KEY` is set |
+| Push | Pull-based device queue; FCM HTTP v1 transport when a service account is configured |
 
 ---
 
@@ -102,9 +102,11 @@ staff flip the plan in the admin panel.
     │   ├── TimezonePicker.tsx
     │   └── ui.tsx             Panel, Badge, Button, empty/error/skeleton states
     ├── lib/
-    │   ├── api.ts             fetch wrapper (always relative `/api/...`)
+    │   ├── api.ts             fetch wrapper (`/api/...`; absolute only in the native shell)
     │   ├── store.tsx          App state: timezone, prefs, session, toasts
-    │   ├── push.ts            Notification permission + queue polling
+    │   ├── push.ts            Web notification permission + queue polling
+    │   ├── nativePush.ts      Capacitor/FCM bridge (native builds only)
+    │   ├── firebaseStub.ts    Dead-code stub so the browser bundle skips the Firebase SDK
     │   ├── storage.ts         localStorage keys and device token
     │   ├── time.ts            Timezone-aware formatting
     │   ├── types.ts           Shared TypeScript types
@@ -117,19 +119,93 @@ staff flip the plan in the admin panel.
 
 ---
 
-## 5. Local setup
+## 5. Running it locally (demo)
+
+The API and the app are two separate processes. Everything below assumes the **default API port
+3001**; if you run the API somewhere else, move the proxy with it (see 5.1).
+
+### 5.1 Web demo
 
 ```bash
-npm install
+npm install          # once
 
 # terminal 1 — API on :3001
 npm run server
 
-# terminal 2 — app on :5173 (proxies /api to :3001)
+# terminal 2 — app on :5173
 npm run dev
 ```
 
-Scripts:
+Open **http://localhost:5173**.
+
+Vite forwards every `/api/...` call to `http://localhost:3001` (`server.proxy` in
+`vite.config.ts`), which is why the app can use relative paths everywhere. To run against an API
+on a different port:
+
+```bash
+API_PROXY_TARGET=http://localhost:3099 npm run dev
+```
+
+The first visit shows the risk disclaimer and timezone picker; after that you land on the signal
+feed. All data lives in `server/data/app.db`, so anything you publish or edit survives a
+restart.
+
+### 5.2 Admin dashboard
+
+Open **http://localhost:5173/admin** — it is a route inside the same app, not a second server.
+Sign in with:
+
+| Field | Default |
+| --- | --- |
+| Username | `admin` |
+| Password | `Kx7-Panel-Trade-92` |
+
+There is also a discreet **“Staff access”** link in the desktop footer (hidden on mobile).
+
+Those are the defaults, hashed into the database on **first boot** from `ADMIN_USERNAME` /
+`ADMIN_PASSWORD`. Changing the variables afterwards has no effect — see §6.
+
+### 5.3 Android demo
+
+The native app is a Capacitor wrapper around the same web build. The one thing it needs that the
+web build doesn't is the **API's absolute origin**, baked in at build time: the WebView's origin
+is `https://localhost`, so a relative `/api` call has nothing to resolve against.
+
+```bash
+# 1. build the web assets with the API origin baked in
+VITE_API_BASE_URL=http://10.0.2.2:3001 npm run build
+
+# 2. copy them into the native project
+npx cap sync android
+
+# 3. build and install the debug APK
+cd android
+JAVA_HOME=/opt/homebrew/opt/openjdk@21 \
+  ANDROID_HOME=$HOME/Library/Android/sdk ./gradlew :app:assembleDebug
+$HOME/Library/Android/sdk/platform-tools/adb install -r \
+  app/build/outputs/apk/debug/app-debug.apk
+```
+
+Which origin the device should use:
+
+| Target | `VITE_API_BASE_URL` | Why |
+| --- | --- | --- |
+| Emulator | `http://10.0.2.2:3001` | `10.0.2.2` is the emulator's alias for the host loopback |
+| Phone over USB | `http://localhost:3001` | pair it with `adb reverse tcp:3001 tcp:3001` to tunnel the port |
+| Phone over Wi-Fi | `http://<your-lan-ip>:3001` | phone and Mac on the same network |
+
+(`JAVA_HOME` assumes Homebrew's `openjdk@21`; Capacitor 8 refuses to build on Java 17.)
+
+Cleartext `http://` is already allowed: `android.allowMixedContent` is set in
+`capacitor.config.ts` and a debug-only `android/app/src/debug/AndroidManifest.xml` enables
+`usesCleartextTraffic`. Release builds stay HTTPS-only.
+
+Notifications with the app **closed** additionally need Firebase: `google-services.json` in
+`android/app/`, plus a service account on the server (`GOOGLE_APPLICATION_CREDENTIALS`, §6).
+Without the service account nothing is lost — the device simply drains the queue from
+`/api/notifications/pending` while it is running.
+
+### 5.4 Scripts
 
 | Script | Purpose |
 | --- | --- |
@@ -151,7 +227,7 @@ safe default — but the first two must be set before going live.
 | `TRADINGVIEW_WEBHOOK_SECRET` | `change-me-tradingview-secret` | Shared secret TradingView must send. Compared in constant time. |
 | `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Admin password, hashed into the database on first boot. |
 | `ADMIN_USERNAME` | `admin` | Admin username, stored on first boot. |
-| `FCM_SERVER_KEY` | — | When set, notifications are pushed through FCM so they arrive with the app closed. Without it the app pulls its queue while running. |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON. When set, notifications are pushed through FCM HTTP v1 so they arrive with the app closed. Without it the app pulls its queue while running. |
 | `PORT` | `3001` | Port the API listens on (assigned by the host in production). |
 
 Changing `ADMIN_PASSWORD` after the first boot has no effect — the credentials are already
@@ -271,8 +347,7 @@ is decided by `evaluateEligibility()` and the reason is stored for the logs:
 | BUY/SELL preference off | `buy_pref_off` / `sell_pref_off` |
 | User suspended | `user_suspended` |
 | Pro active (`plan = PRO`, not suspended, `pro_end_at` in the future) | sent — `pro_active` |
-| Free, under the daily cap | sent — `free_quota` |
-| Free, cap reached | `free_daily_limit` |
+| Free (no push cap) | sent — `free_quota` |
 | Any edit notice for a signal the device already has | sent — `signal_updated` |
 
 Retries: up to 5 attempts with exponential backoff (5s, 10s, 20s, 40s, 80s). An `NotRegistered`
@@ -309,7 +384,7 @@ than the balance. Spread, commission, funding and slippage are explicitly exclud
 
 | Role | Auth | Can |
 | --- | --- | --- |
-| Guest / Free | none (device token only) | Browse the feed with the newest N signals unlocked, read closed history, use the calculator, set timezone, receive up to 2 pushes per day |
+| Guest / Free | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone, receive up to 2 pushes per day |
 | Pro | email + password, plan granted by staff | Everything above with **all** signals unlocked and unlimited real-time pushes while `pro_end_at` is in the future |
 | Suspended | — | Treated as ineligible for all notifications |
 | Admin | username + password → bearer token | Users and Pro durations, suspend, create/edit/close/delete signals, delivery + webhook logs, runtime settings |
@@ -434,9 +509,10 @@ Then check **Admin → Delivery logs → Webhook events**.
 
 ## 12. Admin panel
 
-Open `https://YOUR-DOMAIN/admin` (there is only a discreet “Staff access” link in the desktop
-footer). Default credentials: `admin` / `Kx7-Panel-Trade-92` — change them via the
-`ADMIN_USERNAME` / `ADMIN_PASSWORD` variables **before the first boot**, or ask for a rotation.
+**Locally:** <http://localhost:5173/admin> — sign in as `admin` / `Kx7-Panel-Trade-92` (§5.2).
+**Deployed:** `https://YOUR-DOMAIN/admin`. Either way there is a discreet “Staff access” link in
+the desktop footer (hidden on mobile). Change the credentials via the `ADMIN_USERNAME` /
+`ADMIN_PASSWORD` variables **before the first boot**, or ask for a rotation.
 
 | Tab | Contents |
 | --- | --- |
@@ -452,7 +528,44 @@ signal”, and save. The dialog shows the full change history underneath.
 
 ---
 
-## 13. Tests
+## 13. Testing
+
+Start both processes first (§5.1).
+
+### 13.1 Manual walkthrough
+
+1. **First run** — accept the risk disclaimer, pick a timezone.
+2. **Signals** — newest first. As a free user the first N open signals of the day are readable; the rest are blurred.
+3. **Locked card** — tapping one says “Pro required” instead of showing details.
+4. **History** — closed signals from the last 14 days, with result and P/L.
+5. **Calculator** — balance, risk %, entry, stop → units (crypto) or lots (forex).
+6. **Settings** — change the timezone, toggle notification preferences.
+7. **Account** — sign up, then in Admin → Users grant Pro for 30 days; every signal unlocks.
+8. **Edit flow** — Admin → Signals → Edit, change a price and save: the card gains an “Edited”
+   badge and the detail page a full change history.
+
+### 13.2 Push notification test
+
+Publish a signal exactly the way TradingView will (§11) and confirm the push arrives.
+
+```bash
+# background or close the app first
+curl -X POST http://localhost:3001/api/webhooks/tradingview \
+  -H 'Content-Type: application/json' \
+  -H 'x-webhook-secret: change-me-tradingview-secret' \
+  -d '{"id":"demo-1","symbol":"BTCUSDT","action":"BUY","price":65000,"takeProfits":[66000,67000]}'
+```
+
+Expect `202 {"ok":true,"duplicate":false,...}` and, seconds later, a system notification; tapping
+it opens that signal. **Replay the same `id`** and you get `200 {"duplicate":true}` with **no
+second notification** — that is the idempotency guarantee.
+
+Free users get a push for every signal, but once they've passed the daily
+`free_visible_count` limit the push is a generic "New signal released" alert with no
+symbol/price. Pro users get the full text. Every skip reason is visible in
+**Admin → Delivery logs**.
+
+### 13.3 Automated API suite
 
 ```bash
 npm run server        # terminal 1
@@ -479,8 +592,12 @@ Coverage:
   take-profit replacement, revision bump, change log, no-op edits, the UPDATE notification
   reaching devices that already had the signal, and close-price recording
 
-The suite runs against a live server and writes real rows, so point it at a disposable
-database — not production.
+**Expected result: `48 passed, 0 failed`.**
+
+The suite runs against a live server and **writes real rows**, so point it at a disposable
+database — not production. To protect a database you care about, move `server/data/app.db`,
+`app.db-wal` **and** `app.db-shm` aside first (the WAL holds the recent writes), run the suite
+against the fresh database, then move all three back.
 
 ---
 
@@ -488,7 +605,7 @@ database — not production.
 
 1. **Build the app:** `npm run build` → `dist/`.
 2. **Run the API:** `npm run server` with `PORT`, `TRADINGVIEW_WEBHOOK_SECRET`,
-   `ADMIN_USERNAME`, `ADMIN_PASSWORD` and optionally `FCM_SERVER_KEY` set.
+   `ADMIN_USERNAME`, `ADMIN_PASSWORD` and optionally `GOOGLE_APPLICATION_CREDENTIALS` set.
 3. **Serve both behind one HTTPS origin** so the app can keep calling relative `/api/...`
    paths. The webhook must be reachable over HTTPS for TradingView.
 4. **Persist `server/data/`** — it holds the SQLite database.
@@ -498,8 +615,9 @@ database — not production.
    * confirm the Overview tab no longer warns about the webhook secret;
    * fire one test alert from TradingView and watch it land in the logs.
 
-**Android APK.** The app is packaged from the same build. Notifications while the app is fully
-closed require `FCM_SERVER_KEY`; without it the queue is drained whenever the app is running
+**Android app.** The client is wrapped with Capacitor (`android/`) and packaged from the same
+web build. Notifications while the app is fully closed require a Firebase service account
+(`GOOGLE_APPLICATION_CREDENTIALS`); without it the queue is drained whenever the app is running
 and nothing is lost — the items simply wait.
 
 ---
@@ -510,9 +628,17 @@ and nothing is lost — the items simply wait.
 | --- | --- |
 | Webhook returns `401` | Secret mismatch. Compare `TRADINGVIEW_WEBHOOK_SECRET` with the alert message (never logged — check the value, not the log). |
 | Webhook returns `422` | `symbol` or `action` missing, or an action other than BUY/SELL/CLOSE. |
-| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`free_daily_limit`, `notifications_off`, `sell_pref_off`, …). |
-| Notifications only arrive with the app open | `FCM_SERVER_KEY` is not set. That is the expected fallback behaviour. |
+| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `sell_pref_off`, …). |
+| Notifications only arrive with the app open | No Firebase service account is configured (`GOOGLE_APPLICATION_CREDENTIALS` unset). That is the expected fallback behaviour. |
 | An edit sent no notification | Nothing actually changed, `notify` was unticked, or no device had received the original signal yet (SENT/DELIVERED). |
 | Admin password change ignored | Credentials are seeded once. Remove the `admin_password_hash` setting row and restart. |
 | Sample signals visible in production | Admin → Signals → **Delete sample data**. |
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal Node output. Not an error. |
+| Browser feed is blank / errors immediately | The API isn't running, or Vite is proxying to the wrong port. Check `npm run server` is up and that `API_PROXY_TARGET` matches its `PORT`. |
+| Android app shows a blank screen | Built without `VITE_API_BASE_URL`, so `/api` hits the WebView's own asset server and returns `index.html`. Rebuild per §5.3. |
+| Android push never arrives; logcat shows `Firebase Installations Service is unavailable` | The emulator can't resolve hostnames (it does **not** inherit the Mac's resolver). Boot it with a working DNS server: `emulator -avd <name> -dns-server <your-dns>`. |
+| Android push never arrives and logcat is clean | No service account on the server, so `transportSend` silently no-ops (see §6). The app still gets the signal by polling while it runs. |
+
+---
+
+*Test line for PR workflow verification (remove after test).*

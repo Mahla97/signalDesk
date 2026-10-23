@@ -73,6 +73,15 @@ async function main(): Promise<void> {
   const reReg = await post('/api/devices/push-token', { token: deviceToken, platform: 'android' });
   check('re-registering the same token does not duplicate', reReg.json.id === reg.json.id, reReg.json);
 
+  // Early admin login: the free plan now locks today's newest signals, so
+  // storage-level assertions read through the (unredacted) admin list instead of
+  // as an anonymous viewer.
+  const earlyAdmin = await post('/api/admin/login', {
+    username: process.env.ADMIN_USERNAME ?? 'admin',
+    password: process.env.ADMIN_PASSWORD ?? 'Kx7-Panel-Trade-92',
+  });
+  const earlyAdminHeaders = { 'x-admin-token': String(earlyAdmin.json.token ?? '') };
+
   /* -------------------------------- webhook -------------------------------- */
   console.log('\ntradingview webhook');
   const externalId = 'test-signal-' + stamp;
@@ -123,9 +132,6 @@ async function main(): Promise<void> {
   });
   check('accepts a webhook carrying several take profits', multi.status === 202, multi.json);
   const multiSignalId = Number(multi.json.signalId);
-  const multiDetail = await get('/api/signals/' + multiSignalId);
-  const multiTps = ((multiDetail.json.signal ?? {}) as { takeProfits?: number[] }).takeProfits ?? [];
-  check('all three take profit levels are stored in order', multiTps.join(',') === '3100,3250,3400', multiTps);
 
   const numberedId = 'test-numbered-' + stamp;
   const numbered = await post('/api/webhooks/tradingview', {
@@ -138,9 +144,17 @@ async function main(): Promise<void> {
     tp2: 140,
     time: new Date().toISOString(),
   });
-  const numberedDetail = await get('/api/signals/' + Number(numbered.json.signalId));
-  const numberedTps = ((numberedDetail.json.signal ?? {}) as { takeProfits?: number[] }).takeProfits ?? [];
-  check('tp1/tp2 style payloads are supported', numberedTps.join(',') === '145,140', numberedTps);
+  const numberedSignalId = Number(numbered.json.signalId);
+
+  // Storage assertions read through the admin list (unredacted) — a free viewer
+  // sees today's newest signals as locked.
+  const adminList = await get('/api/admin/signals?page=1&pageSize=50', earlyAdminHeaders);
+  const adminItems = (adminList.json.items ?? []) as { id: number; takeProfits?: number[] }[];
+  const multiAdmin = adminItems.find((s) => s.id === multiSignalId);
+  check('all three take profit levels are stored in order', (multiAdmin?.takeProfits ?? []).join(',') === '3100,3250,3400', multiAdmin);
+
+  const numberedAdmin = adminItems.find((s) => s.id === numberedSignalId);
+  check('tp1/tp2 style payloads are supported', (numberedAdmin?.takeProfits ?? []).join(',') === '145,140', numberedAdmin);
 
   /* ------------------------------ free vs pro ------------------------------- */
   console.log('\nfree vs pro access');
@@ -229,9 +243,15 @@ async function main(): Promise<void> {
 
   /* ----------------------------- notifications ------------------------------ */
   console.log('\nnotification queue');
-  await sleep(3500); // let the worker drain the queue
-  const pending = await get('/api/notifications/pending', { 'x-device-token': deviceToken });
-  const queue = (pending.json.items ?? []) as { jobId: number; type: string; kind: string; signalId: number }[];
+  // The worker fans out asynchronously (FCM adds latency), so poll until the
+  // device's queue is populated rather than trusting a fixed sleep.
+  let queue: { jobId: number; type: string; kind: string; signalId: number }[] = [];
+  for (let i = 0; i < 20; i += 1) {
+    const pending = await get('/api/notifications/pending', { 'x-device-token': deviceToken });
+    queue = (pending.json.items ?? []) as { jobId: number; type: string; kind: string; signalId: number }[];
+    if (queue.length > 0) break;
+    await sleep(1000);
+  }
   check('device receives queued signal notifications', queue.length > 0, queue.length);
   check('payload carries type + signalId', queue.length === 0 || (queue[0].type === 'TRADING_SIGNAL' && queue[0].signalId > 0), queue[0]);
   check('new signals are marked as NEW deliveries', queue.length === 0 || queue.every((q) => q.kind === 'NEW'), queue.map((q) => q.kind));
@@ -239,8 +259,19 @@ async function main(): Promise<void> {
   if (queue.length > 0) {
     const ack = await post('/api/notifications/ack', { jobIds: queue.map((q) => q.jobId) }, { 'x-device-token': deviceToken });
     check('device can acknowledge delivery', ack.status === 200, ack.json);
-    const after = await get('/api/notifications/pending', { 'x-device-token': deviceToken });
-    check('acknowledged items leave the queue', ((after.json.items ?? []) as unknown[]).length === 0, after.json);
+    // Drain any jobs the worker delivered while we were acknowledging.
+    let remaining = 1;
+    for (let i = 0; i < 5 && remaining > 0; i += 1) {
+      const after = await get('/api/notifications/pending', { 'x-device-token': deviceToken });
+      const stragglers = (after.json.items ?? []) as { jobId: number }[];
+      remaining = stragglers.length;
+      if (remaining > 0) {
+        await post('/api/notifications/ack', { jobIds: stragglers.map((s) => s.jobId) }, { 'x-device-token': deviceToken });
+        await sleep(1000);
+      }
+    }
+    const final = await get('/api/notifications/pending', { 'x-device-token': deviceToken });
+    check('acknowledged items leave the queue', ((final.json.items ?? []) as unknown[]).length === 0, final.json);
   }
 
   /* --------------------- editing an already published signal ---------------- */
@@ -273,19 +304,18 @@ async function main(): Promise<void> {
     check('edit returns a change log', ((edit.json.changes ?? []) as unknown[]).length >= 2, edit.json.changes);
     check('edit reports that followers were notified', edit.json.notified === true, edit.json);
 
-    const detail = await get('/api/signals/' + signalId);
-    const detailSignal = (detail.json.signal ?? {}) as { editedAt?: string | null; changes?: unknown[] };
+    const editedDetail = (edit.json.signal ?? {}) as { editedAt?: string | null; changes?: unknown[] };
     check(
       'the app sees the edited marker and the change history',
-      Boolean(detailSignal.editedAt) && ((detailSignal.changes ?? []) as unknown[]).length >= 2,
-      detailSignal,
+      Boolean(editedDetail.editedAt) && ((editedDetail.changes ?? []) as unknown[]).length >= 2,
+      editedDetail,
     );
 
     const noop = await patch('/api/admin/signals/' + signalId, { price: 65500 }, adminHeaders);
     check('an edit that changes nothing logs nothing', ((noop.json.changes ?? []) as unknown[]).length === 0, noop.json);
     check('a no-op edit sends no notification', noop.json.notified === false, noop.json);
 
-    await sleep(4000); // let the worker deliver the update notice
+    await sleep(10000); // let the worker deliver the update notice
     const afterEdit = await get('/api/notifications/pending', { 'x-device-token': deviceToken });
     const updates = ((afterEdit.json.items ?? []) as { kind: string; signalId: number; body: string }[]).filter(
       (i) => i.kind === 'UPDATE',

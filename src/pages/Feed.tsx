@@ -6,8 +6,8 @@ import { useSignals } from '../lib/useSignals';
 import { useStore } from '../lib/store';
 
 export default function Feed(): React.ReactElement {
-  const { timezone, isPro, config, freePushUsedToday, prefs } = useStore();
-  const { items, loading, loadingMore, error, hasMore, loadMore, reload } = useSignals('open');
+  const { timezone, isPro, config, prefs, signalTick } = useStore();
+  const { items, loading, loadingMore, error, hasMore, loadMore, reload } = useSignals('open', 15, signalTick);
 
   const lockedCount = items.filter((i) => i.locked).length;
 
@@ -30,8 +30,7 @@ export default function Feed(): React.ReactElement {
 
         {!isPro ? (
           <p className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-400" data-testid="free-quota">
-            Free plan: {config.freeVisibleCount} newest signals unlocked and up to {config.freePushPerDay} alerts
-            per day ({freePushUsedToday}/{config.freePushPerDay} used today).
+            Free plan: the first {config.freeVisibleCount} signals of the day are unlocked; the rest are blurred.
           </p>
         ) : null}
       </Panel>
