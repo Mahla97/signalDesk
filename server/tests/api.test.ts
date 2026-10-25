@@ -73,7 +73,7 @@ async function main(): Promise<void> {
   const reReg = await post('/api/devices/push-token', { token: deviceToken, platform: 'android' });
   check('re-registering the same token does not duplicate', reReg.json.id === reg.json.id, reReg.json);
 
-  // Early admin login: the free plan now locks today's newest signals, so
+  // Early admin login: Members now see today's newest signals locked, so
   // storage-level assertions read through the (unredacted) admin list instead of
   // as an anonymous viewer.
   const earlyAdmin = await post('/api/admin/login', {
@@ -146,7 +146,7 @@ async function main(): Promise<void> {
   });
   const numberedSignalId = Number(numbered.json.signalId);
 
-  // Storage assertions read through the admin list (unredacted) — a free viewer
+  // Storage assertions read through the admin list (unredacted) — a Member
   // sees today's newest signals as locked.
   const adminList = await get('/api/admin/signals?page=1&pageSize=50', earlyAdminHeaders);
   const adminItems = (adminList.json.items ?? []) as { id: number; takeProfits?: number[] }[];
@@ -156,20 +156,20 @@ async function main(): Promise<void> {
   const numberedAdmin = adminItems.find((s) => s.id === numberedSignalId);
   check('tp1/tp2 style payloads are supported', (numberedAdmin?.takeProfits ?? []).join(',') === '145,140', numberedAdmin);
 
-  /* ------------------------------ free vs pro ------------------------------- */
-  console.log('\nfree vs pro access');
-  const freeList = await get('/api/signals?status=open&pageSize=30');
-  const items = (freeList.json.items ?? []) as { locked: boolean }[];
+  /* ---------------------------- member vs partner ---------------------------- */
+  console.log('\nmember vs partner access');
+  const memberList = await get('/api/signals?status=open&pageSize=30');
+  const items = (memberList.json.items ?? []) as { locked: boolean }[];
   const lockedCount = items.filter((i) => i.locked).length;
-  check('anonymous viewer is treated as free', freeList.json.isPro === false, freeList.json.isPro);
-  check('free viewer sees some locked signals', items.length === 0 || lockedCount >= 0, { lockedCount });
+  check('anonymous viewer is treated as a Member', memberList.json.isPartner === false, memberList.json.isPartner);
+  check('Member viewer sees some locked signals', items.length === 0 || lockedCount >= 0, { lockedCount });
 
   const lockedItem = items.find((i) => i.locked) as { id: number } | undefined;
   if (lockedItem) {
     const denied = await get('/api/signals/' + lockedItem.id);
-    check('free viewer cannot open a locked signal', denied.status === 403, denied.json);
+    check('Member viewer cannot open a locked signal', denied.status === 403, denied.json);
   } else {
-    check('free viewer cannot open a locked signal (skipped — nothing locked)', true);
+    check('Member viewer cannot open a locked signal (skipped — nothing locked)', true);
   }
 
   const closed = await get('/api/signals?status=closed&pageSize=30');
@@ -194,7 +194,7 @@ async function main(): Promise<void> {
 
   const me = await get('/api/auth/me', { Authorization: 'Bearer ' + userToken });
   const meUser = me.json.user as { plan: string } | null;
-  check('new account starts on the free plan', meUser?.plan === 'FREE', meUser);
+  check('new account starts as a Member', meUser?.plan === 'MEMBER', meUser);
 
   /* --------------------------------- admin ---------------------------------- */
   console.log('\nadmin panel');
@@ -217,24 +217,24 @@ async function main(): Promise<void> {
     check('admin can list users', Boolean(created), list.length);
 
     if (created) {
-      const upgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'PRO', days: 30 }, adminHeaders);
-      const upgraded = upgrade.json.user as { plan: string; proEndAt: string } | undefined;
-      check('admin can grant PRO with a duration', upgraded?.plan === 'PRO' && Boolean(upgraded?.proEndAt), upgrade.json);
+      const upgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'PARTNER', days: 30 }, adminHeaders);
+      const upgraded = upgrade.json.user as { plan: string; partnerEndAt: string } | undefined;
+      check('admin can grant Partner with a duration', upgraded?.plan === 'PARTNER' && Boolean(upgraded?.partnerEndAt), upgrade.json);
 
-      const proView = await get('/api/signals?status=open&pageSize=30', { Authorization: 'Bearer ' + userToken });
-      const proItems = (proView.json.items ?? []) as { locked: boolean }[];
-      check('pro user sees every signal unlocked', proView.json.isPro === true && proItems.every((i) => !i.locked), {
-        isPro: proView.json.isPro,
+      const partnerView = await get('/api/signals?status=open&pageSize=30', { Authorization: 'Bearer ' + userToken });
+      const partnerItems = (partnerView.json.items ?? []) as { locked: boolean }[];
+      check('Partner sees every signal unlocked', partnerView.json.isPartner === true && partnerItems.every((i) => !i.locked), {
+        isPartner: partnerView.json.isPartner,
       });
 
       if (signalId) {
         const detail = await get('/api/signals/' + signalId, { Authorization: 'Bearer ' + userToken });
-        check('pro user can open any signal detail', detail.status === 200, detail.status);
+        check('Partner can open any signal detail', detail.status === 200, detail.status);
       }
 
-      const downgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'FREE' }, adminHeaders);
+      const downgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'MEMBER' }, adminHeaders);
       const downgraded = downgrade.json.user as { plan: string } | undefined;
-      check('admin can move a user back to FREE', downgraded?.plan === 'FREE', downgrade.json);
+      check('admin can move a user back to Member', downgraded?.plan === 'MEMBER', downgrade.json);
     }
 
     const logs = await get('/api/admin/logs', adminHeaders);

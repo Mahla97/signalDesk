@@ -3,7 +3,7 @@ import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { db } from '../lib/db.js';
 import type { SignalRow } from './signals.js';
-import { changeSummary, getSignalById, isSignalInFreeWindow, listSignalChanges } from './signals.js';
+import { changeSummary, getSignalById, isSignalInMemberWindow, listSignalChanges } from './signals.js';
 import { isoPlusMs, nowIso } from './util.js';
 
 export type DeviceRow = {
@@ -25,7 +25,7 @@ export type DeviceRow = {
 type DeviceWithUser = DeviceRow & {
   plan: string | null;
   suspended: number | null;
-  pro_end_at: string | null;
+  partner_end_at: string | null;
 };
 
 export type DeliveryKind = 'NEW' | 'UPDATE' | 'DELETE';
@@ -61,15 +61,15 @@ export function evaluateEligibility(
   if (kind === 'UPDATE') return { eligible: true, reason: 'signal_updated' };
   if (kind === 'DELETE') return { eligible: true, reason: 'signal_deleted' };
 
-  const proActive =
-    device.plan === 'PRO' &&
+  const partnerActive =
+    device.plan === 'PARTNER' &&
     !device.suspended &&
-    Boolean(device.pro_end_at) &&
-    new Date(device.pro_end_at as string).getTime() > Date.now();
+    Boolean(device.partner_end_at) &&
+    new Date(device.partner_end_at as string).getTime() > Date.now();
 
-  if (proActive) return { eligible: true, reason: 'pro_active' };
+  if (partnerActive) return { eligible: true, reason: 'partner_active' };
 
-  return { eligible: true, reason: 'free_quota' };
+  return { eligible: true, reason: 'member_quota' };
 }
 
 /* ---------------------------- notification copy ---------------------------- */
@@ -99,8 +99,8 @@ export function buildNotification(
 }
 
 /**
- * Notification content for a specific device. Free devices get the full text
- * only when the signal is inside their daily visible window (free_visible_count);
+ * Notification content for a specific device. Members get the full text
+ * only when the signal is inside their daily visible window (member_visible_count);
  * otherwise the push is a generic "new signal" alert that leaks no details.
  * UPDATE/DELETE always show full text — the device already holds the signal.
  */
@@ -114,19 +114,19 @@ export function buildNotificationForDevice(
 
   const user = db
     .prepare(
-      'SELECT u.plan, u.suspended, u.pro_end_at FROM devices d LEFT JOIN users u ON u.id = d.user_id WHERE d.id = ?',
+      'SELECT u.plan, u.suspended, u.partner_end_at FROM devices d LEFT JOIN users u ON u.id = d.user_id WHERE d.id = ?',
     )
-    .get(deviceId) as { plan: string | null; suspended: number | null; pro_end_at: string | null } | undefined;
+    .get(deviceId) as { plan: string | null; suspended: number | null; partner_end_at: string | null } | undefined;
 
-  const proActive =
-    user?.plan === 'PRO' &&
+  const partnerActive =
+    user?.plan === 'PARTNER' &&
     !user?.suspended &&
-    Boolean(user?.pro_end_at) &&
-    new Date(user.pro_end_at as string).getTime() > Date.now();
+    Boolean(user?.partner_end_at) &&
+    new Date(user.partner_end_at as string).getTime() > Date.now();
 
-  if (proActive || isSignalInFreeWindow(signal)) return full;
+  if (partnerActive || isSignalInMemberWindow(signal)) return full;
 
-  const generic = { body: 'Upgrade to Pro to view this signal.' };
+  const generic = { body: 'Available to Partners.' };
   if (kind === 'DELETE') return { title: 'Signal removed', ...generic };
   if (kind === 'UPDATE') return { title: 'Signal updated', ...generic };
   return { title: 'New signal released', ...generic };
@@ -156,7 +156,7 @@ export function enqueueSignalDistribution(
     kind === 'UPDATE' || kind === 'DELETE'
       ? (db
           .prepare(
-            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.pro_end_at AS pro_end_at
+            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.partner_end_at AS partner_end_at
              FROM devices d
              LEFT JOIN users u ON u.id = d.user_id
              WHERE d.disabled = 0
@@ -168,7 +168,7 @@ export function enqueueSignalDistribution(
           .all(signal.id) as DeviceWithUser[])
       : (db
           .prepare(
-            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.pro_end_at AS pro_end_at
+            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.partner_end_at AS partner_end_at
              FROM devices d LEFT JOIN users u ON u.id = d.user_id
              WHERE d.disabled = 0`,
           )

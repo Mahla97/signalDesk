@@ -36,12 +36,12 @@ export default function Contact(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Contact us" subtitle="Questions, support, or upgrading to Pro" />
+      <SectionTitle title="Contact us" subtitle="Questions, support, or joining our team" />
 
-      <Panel className="p-5" testId="pro-info">
+      <Panel className="p-5" testId="join-info">
         <h2 className="flex items-center gap-2 text-base font-bold text-slate-100">
           <Sparkles className="h-5 w-5 text-sky-300" aria-hidden="true" />
-          How to become a Pro member
+          How to become a Partner
         </h2>
         <ol className="mt-3 space-y-2 text-sm text-slate-300">
           <li className="flex gap-3">
@@ -54,11 +54,11 @@ export default function Contact(): React.ReactElement {
           </li>
           <li className="flex gap-3">
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500/15 text-xs font-bold text-sky-300">3</span>
-            Our team activates Pro on your account — usually within 24 hours.
+            Our team activates Partner status on your account — usually within 24 hours.
           </li>
         </ol>
         <p className="mt-3 text-xs text-slate-500">
-          Pro activation is handled by our team outside the app.
+          Partner activation is handled by our team outside the app.
         </p>
       </Panel>
 

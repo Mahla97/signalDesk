@@ -12,10 +12,10 @@ import {
   bearer,
   createUser,
   currentUser,
-  expireProSubscriptions,
+  expirePartnerAccess,
   findUserByEmail,
   isAdmin,
-  isProActive,
+  isPartnerActive,
   login,
   logout,
   publicUser,
@@ -63,17 +63,22 @@ import {
 initDatabase();
 startWorker();
 
-// Scheduled job: expire PRO subscriptions once a minute.
-expireProSubscriptions();
+// Scheduled job: expire PARTNER access once a minute.
+expirePartnerAccess();
 setInterval(() => {
   try {
-    expireProSubscriptions();
+    expirePartnerAccess();
   } catch (err) {
     console.error('[cron] expiry job failed', err);
   }
 }, 60_000);
 
 const WEBHOOK_SECRET = process.env.TRADINGVIEW_WEBHOOK_SECRET || 'change-me-tradingview-secret';
+
+if (process.env.NODE_ENV === 'production' && WEBHOOK_SECRET === 'change-me-tradingview-secret') {
+  console.error('[server] Refusing to start: set TRADINGVIEW_WEBHOOK_SECRET in production.');
+  process.exit(1);
+}
 
 /* ------------------------------- helpers --------------------------------- */
 
@@ -84,10 +89,10 @@ function getDevice(req: IncomingMessage): DeviceRow | null {
   return row ?? null;
 }
 
-function viewerIsPro(req: IncomingMessage): { user: UserRow | null; isPro: boolean } {
+function viewerIsPartner(req: IncomingMessage): { user: UserRow | null; isPartner: boolean } {
   const user = currentUser(req);
   if (user) touchUser(user.id);
-  return { user, isPro: isProActive(user) };
+  return { user, isPartner: isPartnerActive(user) };
 }
 
 function requireAdmin(req: IncomingMessage, res: ServerResponse): boolean {
@@ -136,7 +141,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       websiteUrl: s.website_url,
       instagramUrl: s.instagram_url,
       supportEmail: s.support_email,
-      freeVisibleCount: Number(s.free_visible_count),
+      memberVisibleCount: Number(s.member_visible_count),
       historyDays: Number(s.history_days),
       stats: performanceStats(),
     });
@@ -345,7 +350,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   /* -------------------------------- signals -------------------------------- */
 
   if (method === 'GET' && path === '/api/signals') {
-    const { isPro } = viewerIsPro(req);
+    const { isPartner } = viewerIsPartner(req);
     const statusParam = (url.searchParams.get('status') ?? 'open').toLowerCase();
     const status = statusParam === 'closed' || statusParam === 'all' ? statusParam : 'open';
     const data = listSignals({
@@ -353,15 +358,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       market: url.searchParams.get('market'),
       page: Number(url.searchParams.get('page') ?? '1') || 1,
       pageSize: Number(url.searchParams.get('pageSize') ?? '15') || 15,
-      isPro,
+      isPartner,
     });
-    sendJson(res, 200, { ...data, isPro });
+    sendJson(res, 200, { ...data, isPartner });
     return;
   }
 
   params = match('/api/signals/:id', path);
   if (method === 'GET' && params) {
-    const { isPro } = viewerIsPro(req);
+    const { isPartner } = viewerIsPartner(req);
     const id = Number(params.id);
     if (!Number.isFinite(id)) {
       sendJson(res, 400, { error: 'invalid id' });
@@ -372,9 +377,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       sendJson(res, 404, { error: 'signal not found' });
       return;
     }
-    const view = publicSignal(row, isPro);
+    const view = publicSignal(row, isPartner);
     if (view.locked) {
-      sendJson(res, 403, { error: 'pro_required', locked: true, signal: view });
+      sendJson(res, 403, { error: 'partner_required', locked: true, signal: view });
       return;
     }
     view.changes = listSignalChanges(id);
@@ -540,8 +545,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (method === 'GET' && path === '/api/admin/overview') {
     if (!requireAdmin(req, res)) return;
     const users = db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number };
-    const pro = db
-      .prepare("SELECT COUNT(*) AS c FROM users WHERE plan = 'PRO' AND pro_end_at > ?")
+    const partner = db
+      .prepare("SELECT COUNT(*) AS c FROM users WHERE plan = 'PARTNER' AND partner_end_at > ?")
       .get(nowIso()) as { c: number };
     const devices = db.prepare('SELECT COUNT(*) AS c FROM devices WHERE disabled = 0').get() as { c: number };
     const signals = db.prepare('SELECT COUNT(*) AS c FROM signals').get() as { c: number };
@@ -554,7 +559,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const edited = db.prepare('SELECT COUNT(*) AS c FROM signals WHERE edit_count > 0').get() as { c: number };
     sendJson(res, 200, {
       users: users.c,
-      proUsers: pro.c,
+      partnerUsers: partner.c,
       devices: devices.c,
       signals: signals.c,
       pushSent: sent.c,
@@ -589,13 +594,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     const id = Number(params.id);
-    const plan = (toStr(body.plan, 10) ?? 'FREE').toUpperCase();
+    const plan = (toStr(body.plan, 10) ?? 'MEMBER').toUpperCase();
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
     if (!user) {
       sendJson(res, 404, { error: 'user not found' });
       return;
     }
-    if (plan === 'PRO') {
+    if (plan === 'PARTNER') {
       const days = toNumber(body.days) ?? 30;
       if (days <= 0 || days > 3650) {
         sendJson(res, 422, { error: 'days must be between 1 and 3650' });
@@ -604,14 +609,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const start = nowIso();
       const end = new Date(Date.now() + days * 86400000).toISOString();
       db.prepare(
-        "UPDATE users SET plan = 'PRO', subscription_status = 'ACTIVE', pro_start_at = ?, pro_end_at = ? WHERE id = ?",
+        "UPDATE users SET plan = 'PARTNER', partner_status = 'ACTIVE', partner_start_at = ?, partner_end_at = ? WHERE id = ?",
       ).run(start, end, id);
-      console.log(`[admin] user ${user.email} upgraded to PRO for ${days} day(s)`);
+      console.log(`[admin] user ${user.email} upgraded to PARTNER for ${days} day(s)`);
     } else {
       db.prepare(
-        "UPDATE users SET plan = 'FREE', subscription_status = 'INACTIVE', pro_end_at = ? WHERE id = ?",
+        "UPDATE users SET plan = 'MEMBER', partner_status = 'INACTIVE', partner_end_at = ? WHERE id = ?",
       ).run(nowIso(), id);
-      console.log(`[admin] user ${user.email} moved back to FREE`);
+      console.log(`[admin] user ${user.email} moved back to MEMBER`);
     }
     const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow;
     sendJson(res, 200, { user: publicUser(updated) });
@@ -669,7 +674,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       timeTo,
       page,
       pageSize: 25,
-      isPro: true,
+      isPartner: true,
     });
     sendJson(res, 200, data);
     return;
@@ -881,7 +886,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     const allowed = [
-      'free_visible_count',
+      'member_visible_count',
       'history_days',
       'telegram_url',
       'website_url',

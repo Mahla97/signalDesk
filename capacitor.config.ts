@@ -8,10 +8,10 @@ const config: CapacitorConfig = {
     androidScheme: 'https',
   },
   android: {
-    // The shell is served from https://localhost, so a plain-HTTP dev backend
-    // (http://10.0.2.2:<port>, see VITE_API_BASE_URL) is otherwise blocked as
-    // mixed content. Production talks to an HTTPS API, where this has no effect.
-    allowMixedContent: true,
+    // Cleartext HTTP from the https://localhost shell is only needed for local
+    // debug builds against a plain-HTTP backend. Release must reject it, so it is
+    // off by default and enabled explicitly via CAPACITOR_ALLOW_MIXED_CONTENT=true.
+    allowMixedContent: process.env.CAPACITOR_ALLOW_MIXED_CONTENT === 'true',
   },
   plugins: {
     FirebaseMessaging: {

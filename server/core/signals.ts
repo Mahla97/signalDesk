@@ -577,9 +577,9 @@ function redact(row: SignalRow, locked: boolean): PublicSignal {
   };
 }
 
-/** Ids a free viewer may read in full: the first N open signals of the current day. */
+/** Ids a Member who may read in full: the first N open signals of the current day. */
 export function unlockedOpenIds(): Set<number> {
-  const limit = getSettingNumber('free_visible_count', 3);
+  const limit = getSettingNumber('member_visible_count', 3);
   const rows = db
     .prepare(
       `SELECT id FROM signals
@@ -591,12 +591,12 @@ export function unlockedOpenIds(): Set<number> {
 }
 
 /**
- * Whether a single signal falls inside the free "first N of today" window.
+ * Whether a single signal falls inside the Member "first N of today" window.
  * Unlike unlockedOpenIds() it ignores the signal's own deleted/status state, so
  * it also answers correctly for a soft-deleted signal (DELETE notification).
  */
-export function isSignalInFreeWindow(signal: SignalRow): boolean {
-  const limit = getSettingNumber('free_visible_count', 3);
+export function isSignalInMemberWindow(signal: SignalRow): boolean {
+  const limit = getSettingNumber('member_visible_count', 3);
   const since = startOfUtcDayIso();
   const ts = signal.signal_timestamp;
   if (!ts || ts < since) return false;
@@ -610,8 +610,8 @@ export function isSignalInFreeWindow(signal: SignalRow): boolean {
   return earlier.c < limit;
 }
 
-export function isLockedFor(row: SignalRow, isPro: boolean, unlocked?: Set<number>): boolean {
-  if (isPro) return false;
+export function isLockedFor(row: SignalRow, isPartner: boolean, unlocked?: Set<number>): boolean {
+  if (isPartner) return false;
   if (row.status === 'CLOSED') return false; // history is open to everyone
   const set = unlocked ?? unlockedOpenIds();
   return !set.has(row.id);
@@ -626,7 +626,7 @@ export type ListOptions = {
   timeTo?: string | null;
   page: number;
   pageSize: number;
-  isPro: boolean;
+  isPartner: boolean;
 };
 
 export function listSignals(opts: ListOptions): {
@@ -685,7 +685,7 @@ export function listSignals(opts: ListOptions): {
     .all(...params, pageSize, (page - 1) * pageSize) as SignalRow[];
 
   const unlocked = unlockedOpenIds();
-  const items = rows.map((row) => redact(row, isLockedFor(row, opts.isPro, unlocked)));
+  const items = rows.map((row) => redact(row, isLockedFor(row, opts.isPartner, unlocked)));
   return {
     items,
     page,
@@ -695,8 +695,8 @@ export function listSignals(opts: ListOptions): {
   };
 }
 
-export function publicSignal(row: SignalRow, isPro: boolean): PublicSignal {
-  return redact(row, isLockedFor(row, isPro));
+export function publicSignal(row: SignalRow, isPartner: boolean): PublicSignal {
+  return redact(row, isLockedFor(row, isPartner));
 }
 
 export function rawPublicSignal(row: SignalRow): PublicSignal {

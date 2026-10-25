@@ -71,7 +71,7 @@ function Toasts(): React.ReactElement | null {
 }
 
 export default function Layout({ children }: { children: ReactNode }): React.ReactElement {
-  const { isPro } = useStore();
+  const { isPartner } = useStore();
 
   return (
     <div className="flex min-h-screen flex-col bg-[#0a0e17]">
@@ -104,8 +104,8 @@ export default function Layout({ children }: { children: ReactNode }): React.Rea
           </nav>
 
           <div className="ms-auto md:ms-0">
-            <Badge tone={isPro ? 'pro' : 'neutral'} className="uppercase">
-              {isPro ? 'PRO' : 'FREE'}
+            <Badge tone={isPartner ? 'partner' : 'neutral'} className="uppercase">
+              {isPartner ? 'PARTNER' : 'MEMBER'}
             </Badge>
           </div>
         </div>

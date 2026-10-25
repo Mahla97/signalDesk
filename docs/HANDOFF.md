@@ -18,7 +18,7 @@ TradingView alert  →  webhook  →  SQLite  →  per-device delivery queue  �
 ```
 
 - End users see a live feed, a position-size calculator, and closed-signal history.
-- A Free/Pro model gates how many signals are readable and how many pushes go out.
+- A Member/Partner model gates how many signals are readable and how many pushes go out.
 - Staff manage everything from an admin panel (same app, `/admin` route).
 
 ## 2. Stack
@@ -58,7 +58,7 @@ survives a restart.
 
 ```bash
 VITE_API_BASE_URL=http://10.0.2.2:3001 npm run build   # bake in the API origin
-npx cap sync android
+CAPACITOR_ALLOW_MIXED_CONTENT=true npx cap sync android  # allow http:// backend for debug
 cd android
 JAVA_HOME=/opt/homebrew/opt/openjdk@21 ANDROID_HOME=$HOME/Library/Android/sdk ./gradlew :app:assembleDebug
 $HOME/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -90,13 +90,17 @@ Tests run against a **live server** and write real rows — use a disposable DB.
 
 ## 5. Environment variables
 
-All backend-side. Every one has a safe default; none are required to boot.
+All backend-side. Every one has a safe default; none are required to boot in
+development. In **production** (`NODE_ENV=production`) the server refuses to
+start on the guessable defaults, so `TRADINGVIEW_WEBHOOK_SECRET` and
+`ADMIN_PASSWORD` become mandatory.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRADINGVIEW_WEBHOOK_SECRET` | `change-me-tradingview-secret` | Secret TradingView sends; constant-time compared. **Set before go-live.** |
+| `NODE_ENV` | — | Set to `production` for a release deploy; enables the guards below. |
+| `TRADINGVIEW_WEBHOOK_SECRET` | `change-me-tradingview-secret` | Secret TradingView sends; constant-time compared. **Must be set in production.** |
 | `ADMIN_USERNAME` | `admin` | Only read on first boot. |
-| `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Only read on first boot, stored hashed. **Change before go-live.** |
+| `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Only read on first boot, stored hashed. **Must be set in production.** |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON → enables FCM push. |
 | `FCM_SERVICE_ACCOUNT_JSON` | — | Alternative: the service-account JSON **inline** (no file). |
 | `PORT` | `3001` | API port. |
@@ -137,7 +141,7 @@ server/
   lib/db.ts           SQLite handle — PLATFORM-MANAGED, do not edit
   core/
     schema.ts         tables, migrations, settings, sample data
-    auth.ts           users, sessions, admin tokens, Pro expiry job
+    auth.ts           users, sessions, admin tokens, Partner expiry job
     signals.ts        ingestion, edit + change log, soft-delete, redaction
     distribution.ts   eligibility, queue, worker, FCM transport
     util.ts           JSON/HTTP helpers, hashing, rate limiting
@@ -199,11 +203,11 @@ eligible device. A background worker (every 3s) sends each via
 to pull. Eligibility is decided by `evaluateEligibility()` and the skip reason
 is stored.
 
-`free_visible_count` (default 3) is the only free-tier gate: a free viewer sees
-the **first N open signals of the current day** in full; newer ones are
-blurred/locked. Free devices still get a push for every new signal, but when a
-signal is outside their visible window the push is a generic "New signal
-released" alert with no symbol/price. Pro users always get the full text.
+`free_visible_count` (default 3) is the only access gate for Members: a Member
+sees the **first N open signals of the current day** in full; newer ones are
+blurred/locked. Members still get a push for every new signal, but when a signal
+is outside their visible window the push is a generic "New signal released"
+alert with no symbol/price. Partners always get the full text.
 `UPDATE` and `DELETE` notices always carry full text (the device already holds
 the signal).
 
@@ -228,13 +232,13 @@ The feed does **not** wait for a manual reload:
   (before the worker finishes fanning out `NEW` jobs), the `UPDATE` audience
   (SENT/DELIVERED) may miss devices whose `NEW` job is still `PENDING`. Rare in
   practice; the automated test waits, so it is unaffected.
-- **Free visibility.** A free test device only reads the first
+- **Member visibility.** A Member test device only reads the first
   `free_visible_count` signals of the day; newer ones blur (and their push is
-  generic). Grant Pro to remove the limit while testing.
+  generic). Grant Partner to remove the limit while testing.
 
 ## 12. Not implemented (on purpose)
 
-- **In-app payments.** Upgrading is manual: staff flip the plan in the admin panel.
+- **Partner access.** Activating Partner status is manual: staff flip the tier in the admin panel.
 - **iOS wrapper.** Only Android is wrapped (Capacitor project exists, iOS not added).
 - **Other channels** (Telegram, e-mail). The transport is pluggable
   (`distribution.ts`) but only FCM + device pull exist.
@@ -248,8 +252,8 @@ The feed does **not** wait for a manual reload:
 - `DELETE` delivery kind so deleting a signal notifies devices instantly.
 - `delivery_jobs` unique key now includes `kind` (schema migration).
 - Feed refreshes instantly on any notification (`signalTick`).
-- Free visibility is now "first N signals of the day" (not newest N).
-- Removed `free_push_per_day`; `free_visible_count` is the only free-tier gate.
+- Member visibility is now "first N signals of the day" (not newest N).
+- Removed `free_push_per_day`; `free_visible_count` is the only access gate.
 - Locked signals push a generic no-detail alert for NEW/UPDATE/DELETE.
 - Admin: draft/publish signals + confirmation dialogs on delete.
 - Admin: close-signal uses an in-app price dialog (no `window.prompt`).
@@ -257,6 +261,30 @@ The feed does **not** wait for a manual reload:
 - History paginates with a "Load more" button (page size 10).
 - Admin signal table: pagination + filters (status, action, time range).
 - New test suite `npm run test:admin` covering add/edit/delete.
+- Release build: R8 minify + resource shrink enabled (`proguard-android-optimize.txt`).
+- `android:allowBackup="false"` (auth/device tokens must not auto-restore).
+- Removed Capacitor template tests (wrong `com.getcapacitor.myapp` package).
+- `allowMixedContent` is now opt-in via `CAPACITOR_ALLOW_MIXED_CONTENT=true` (off in release).
+- Production guards: server refuses to boot on default webhook secret / admin password.
+- Renamed the two tiers Free → Member and Pro → Partner; removed all payment/upgrade language from the UI.
+
+## 14. Before Google Play release — checklist
+
+Code fixes are done; these items need console/account access and are not yet done:
+
+- **Privacy policy URL + Data Safety form.** Publish a privacy policy and link it
+  in the Play Console; fill out the Data Safety form (what data is collected, how
+  it is used, how it is deleted).
+- **In-app account deletion.** Play requires users to request account + data
+  deletion in-app (and a web path). Add a deletion flow, not just the link.
+- **Financial-services policy review.** Trading-signal content may require a
+  financial-services declaration/review — confirm eligibility before submit.
+- **Restrict the Firebase Android API key.** `android/app/google-services.json`
+  ships in the APK; lock its API key to this app's package + SHA-1 in Google
+  Cloud Console so it cannot be abused elsewhere.
+- **Play App Signing + release keystore.** Create a release signing key and
+  enroll in Play App Signing; set the signing config in `build.gradle` (or use a
+  keystore properties file) so `:app:assembleRelease` produces a signed, uploadable AAB/APK.
 
 ---
 

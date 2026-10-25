@@ -19,7 +19,7 @@ import type { AdminUser, DeliveryLog, Signal, SignalChange, WebhookEvent } from 
 
 type Overview = {
   users: number;
-  proUsers: number;
+  partnerUsers: number;
   devices: number;
   signals: number;
   pushSent: number;
@@ -274,7 +274,7 @@ function OverviewTab(): React.ReactElement {
 
   const cards = [
     { label: 'Users', value: data.users },
-    { label: 'Active Pro', value: data.proUsers },
+    { label: 'Active Partner', value: data.partnerUsers },
     { label: 'Devices', value: data.devices },
     { label: 'Signals', value: data.signals },
     { label: 'Push sent', value: data.pushSent },
@@ -342,7 +342,7 @@ function UsersTab(): React.ReactElement {
     void load('');
   }, [load]);
 
-  async function setPlan(user: AdminUser, plan: 'PRO' | 'FREE'): Promise<void> {
+  async function setPlan(user: AdminUser, plan: 'PARTNER' | 'MEMBER'): Promise<void> {
     setPending((c) => ({ ...c, [user.id]: true }));
     try {
       const res = await api<{ user: AdminUser }>(`/admin/users/${user.id}/plan`, {
@@ -404,15 +404,15 @@ function UsersTab(): React.ReactElement {
             <Panel key={user.id} className="p-4" testId={`admin-user-${user.id}`}>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-100">{user.email}</span>
-                <Badge tone={user.plan === 'PRO' ? 'pro' : 'neutral'}>{user.plan}</Badge>
+                <Badge tone={user.plan === 'PARTNER' ? 'partner' : 'neutral'}>{user.plan === 'PARTNER' ? 'PARTNER' : 'MEMBER'}</Badge>
                 {user.suspended ? <Badge tone="sell">SUSPENDED</Badge> : null}
               </div>
               <p className="mt-1 text-xs text-slate-500">
                 Joined {formatDateTime(user.createdAt, 'UTC')} · last seen{' '}
                 {user.lastSeenAt ? formatDateTime(user.lastSeenAt, 'UTC') : '—'} (UTC)
               </p>
-              {user.proEndAt ? (
-                <p className="mt-1 text-xs text-slate-400">Pro until {formatDateTime(user.proEndAt, 'UTC')} UTC</p>
+              {user.partnerEndAt ? (
+                <p className="mt-1 text-xs text-slate-400">Partner until {formatDateTime(user.partnerEndAt, 'UTC')} UTC</p>
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -429,11 +429,11 @@ function UsersTab(): React.ReactElement {
                   ))}
                 </select>
                 <Button
-                  onClick={() => void setPlan(user, user.plan === 'PRO' ? 'FREE' : 'PRO')}
+                  onClick={() => void setPlan(user, user.plan === 'PARTNER' ? 'MEMBER' : 'PARTNER')}
                   disabled={pending[user.id]}
                   testId={`admin-toggle-plan-${user.id}`}
                 >
-                  {user.plan === 'PRO' ? 'Set Free' : 'Grant Pro'}
+                  {user.plan === 'PARTNER' ? 'Set Member' : 'Grant Partner'}
                 </Button>
                 <Button
                   variant="danger"
@@ -1530,7 +1530,7 @@ function SettingsTab(): React.ReactElement {
   if (!settings) return <Skeleton className="h-60 w-full" />;
 
   const fields: { key: string; label: string; hint?: string }[] = [
-    { key: 'free_visible_count', label: 'Unlocked signals for free users' },
+    { key: 'member_visible_count', label: 'Unlocked signals for Members' },
     { key: 'history_days', label: 'Closed history window (days)' },
     { key: 'telegram_url', label: 'Telegram link' },
     { key: 'website_url', label: 'Website link' },
@@ -1556,7 +1556,7 @@ function SettingsTab(): React.ReactElement {
           <Button type="submit" disabled={busy} testId="admin-settings-save">
             {busy ? 'Saving…' : 'Save settings'}
           </Button>
-          {saved ? <Badge tone="pro">Saved</Badge> : null}
+          {saved ? <Badge tone="partner">Saved</Badge> : null}
         </div>
       </form>
     </Panel>

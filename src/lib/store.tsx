@@ -37,7 +37,7 @@ const DEFAULT_CONFIG: AppConfig = {
   websiteUrl: 'https://signaldesk.example.com',
   instagramUrl: 'https://instagram.com/signaldesk',
   supportEmail: 'support@signaldesk.example.com',
-  freeVisibleCount: 3,
+  memberVisibleCount: 3,
   historyDays: 14,
   stats: { total: 0, wins: 0, losses: 0, winRate: 0 },
 };
@@ -51,7 +51,7 @@ type Store = {
   prefs: NotificationPreferences;
   config: AppConfig;
   user: AppUser | null;
-  isPro: boolean;
+  isPartner: boolean;
   toasts: Toast[];
   signalTick: number;
   completeOnboarding: (timezone: string) => void;
@@ -275,7 +275,7 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       prefs,
       config,
       user,
-      isPro: user?.plan === 'PRO' && !user.suspended,
+      isPartner: user?.plan === 'PARTNER' && !user.suspended,
       toasts,
       signalTick,
       completeOnboarding,

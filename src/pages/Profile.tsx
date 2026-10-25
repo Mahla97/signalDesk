@@ -1,5 +1,4 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { Crown, LogOut, Mail, ShieldAlert, Timer, UserRound } from 'lucide-react';
 import { Badge, Button, Panel, SectionTitle } from '../components/ui';
 import { useStore } from '../lib/store';
@@ -66,7 +65,7 @@ function AuthForm(): React.ReactElement {
       </div>
 
       <p className="mb-4 text-sm text-slate-400">
-        An account is required for Pro. Free browsing works without signing up.
+        An account is required for Partner status. You can browse without signing up.
       </p>
 
       <form onSubmit={submit} noValidate>
@@ -124,15 +123,15 @@ function AuthForm(): React.ReactElement {
 }
 
 export default function Profile(): React.ReactElement {
-  const { user, isPro, signOut, refreshUser, config } = useStore();
-  const [remaining, setRemaining] = useState(user?.proRemainingMs ?? 0);
+  const { user, isPartner, signOut, refreshUser, config } = useStore();
+  const [remaining, setRemaining] = useState(user?.partnerRemainingMs ?? 0);
 
   useEffect(() => {
-    setRemaining(user?.proRemainingMs ?? 0);
+    setRemaining(user?.partnerRemainingMs ?? 0);
   }, [user]);
 
   useEffect(() => {
-    if (!user || user.proRemainingMs <= 0) return;
+    if (!user || user.partnerRemainingMs <= 0) return;
     const timer = window.setInterval(() => {
       setRemaining((current) => Math.max(0, current - 60000));
     }, 60000);
@@ -146,15 +145,15 @@ export default function Profile(): React.ReactElement {
   if (!user) {
     return (
       <div className="space-y-5">
-        <SectionTitle title="Account" subtitle="Sign in to manage your Pro membership" />
+        <SectionTitle title="Account" subtitle="Sign in to manage your Partner status" />
         <AuthForm />
         <Panel className="p-5">
           <h3 className="text-sm font-bold text-slate-100">Why create an account?</h3>
           <ul className="mt-2 space-y-1.5 text-sm text-slate-400">
-            <li>• Pro membership is linked to your email address.</li>
-            <li>• Your plan follows you to any device you sign in on.</li>
+            <li>• Partner status is linked to your email address.</li>
+            <li>• Your Partner status follows you to any device you sign in on.</li>
             <li>
-              • Free browsing keeps working without an account — the first {config.freeVisibleCount} signals of the
+              • You can keep browsing without an account — the first {config.memberVisibleCount} signals of the
               day are unlocked.
             </li>
           </ul>
@@ -165,7 +164,7 @@ export default function Profile(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Account" subtitle="Your plan and membership status" />
+      <SectionTitle title="Account" subtitle="Your Partner status" />
 
       <Panel className="p-5" testId="profile-panel">
         <div className="flex items-center gap-3">
@@ -179,8 +178,8 @@ export default function Profile(): React.ReactElement {
             </p>
             <p className="text-xs text-slate-500">Member since {formatDateTime(user.createdAt, user.timezone ?? 'UTC')}</p>
           </div>
-          <Badge tone={isPro ? 'pro' : 'neutral'} className="ms-auto">
-            {isPro ? 'PRO' : 'FREE'}
+          <Badge tone={isPartner ? 'partner' : 'neutral'} className="ms-auto">
+            {isPartner ? 'PARTNER' : 'MEMBER'}
           </Badge>
         </div>
 
@@ -194,29 +193,29 @@ export default function Profile(): React.ReactElement {
           </p>
         ) : null}
 
-        {isPro ? (
-          <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/5 p-4" data-testid="profile-pro">
+        {isPartner ? (
+          <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/5 p-4" data-testid="profile-partner">
             <p className="flex items-center gap-2 text-sm font-bold text-sky-200">
               <Crown className="h-4 w-4" aria-hidden="true" />
-              Pro membership active
+              Partner status active
             </p>
             <p className="mt-2 flex items-center gap-2 text-sm text-slate-300">
               <Timer className="h-4 w-4 text-slate-500" aria-hidden="true" />
               Remaining: <span className="font-mono font-bold text-slate-100">{formatDuration(remaining)}</span>
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              Expires {formatDateTime(user.proEndAt, user.timezone ?? 'UTC')}
+              Expires {formatDateTime(user.partnerEndAt, user.timezone ?? 'UTC')}
             </p>
           </div>
         ) : (
-          <div className="mt-4 rounded-xl border border-[#243049] bg-[#0c1220] p-4" data-testid="profile-free">
-            <p className="text-sm font-bold text-slate-100">You are on the Free plan</p>
+          <div className="mt-4 rounded-xl border border-[#243049] bg-[#0c1220] p-4" data-testid="profile-member">
+            <p className="text-sm font-bold text-slate-100">You are a Member</p>
             <p className="mt-1 text-sm text-slate-400">
-              Pro members receive every signal in real time. Our team activates Pro manually.
+              Partners receive every signal in real time. Our team activates Partner status manually.
             </p>
-            <Link to="/contact" className="mt-3 inline-block">
-              <Button testId="profile-upgrade">Contact us to go Pro</Button>
-            </Link>
+            <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-3 inline-block">
+              <Button testId="profile-join">Join Our Team</Button>
+            </a>
           </div>
         )}
 

@@ -1,7 +1,7 @@
 # SignalDesk — Crypto & Forex Trading Signals
 
 A mobile-first trading-signal app (crypto + forex) with a TradingView → backend → push
-pipeline, a Free/Pro access model, a closed-signal history, a position-size calculator and a
+pipeline, a Member/Partner access model, a closed-signal history, a position-size calculator and a
 staff management panel.
 
 > **SignalDesk is not a broker.** It never executes trades. Signals are guidance only, not
@@ -35,26 +35,26 @@ staff management panel.
 | Screen | What it does |
 | --- | --- |
 | First run | Risk disclaimer acknowledgement + timezone selection (defaults to the device timezone) |
-| Signals | Live feed, newest first. Free users see the first N open signals of the day in full, the rest blurred/locked |
+| Signals | Live feed, newest first. Members see the first N open signals of the day in full, the rest blurred/locked |
 | Signal details | Entry, stop loss, **all take-profit levels**, timing in the user's timezone, change history |
 | History | Closed signals from the last 14 days, with result and P/L, paginated |
 | Calculator | Position-size / risk calculator for crypto (units) and forex (lots) |
 | Settings | Timezone, notification preferences, full disclaimer |
-| Contact | Telegram / Website / Instagram / e-mail — also the route to becoming Pro |
-| Account | Email + password sign-up/sign-in, Pro status and remaining time |
+| Contact | Telegram / Website / Instagram / e-mail — also the route to becoming a Partner |
+| Account | Email + password sign-up/sign-in, Partner status and remaining time |
 
 **Backend**
 
 * TradingView webhook → validation → persistence → async fan-out → push.
 * Idempotent ingestion (a replayed alert never creates a second row or a second push).
 * Per-device delivery queue with retries and exponential backoff.
-* Free plan: max 2 push notifications per day (configurable). Pro: everything, in real time.
+* Members see the first N open signals of the day in full; Partners see every signal in real time.
 * **Editable published signals**: every edit is logged, the app shows an “Edited” badge, and
   everyone who already received the signal gets an update notice.
-* Pro subscriptions with an expiry job that returns users to Free automatically.
+* Partner access with an expiry job that returns users to Member automatically.
 
-**Not implemented on purpose:** in-app payments. Upgrading happens by contacting the team;
-staff flip the plan in the admin panel.
+**Not implemented on purpose:** in-app payments. Partner access happens by contacting the team;
+staff flip the tier in the admin panel.
 
 ---
 
@@ -86,7 +86,7 @@ staff flip the plan in the admin panel.
 │   │   └── db.ts              Platform-managed SQLite handle (do not edit)
 │   ├── core/
 │   │   ├── schema.ts          Schema, migrations, settings, sample data
-│   │   ├── auth.ts            Users, sessions, admin tokens, Pro expiry
+│   │   ├── auth.ts            Users, sessions, admin tokens, Partner expiry
 │   │   ├── signals.ts         Ingestion, editing + change log, read/redaction
 │   │   ├── distribution.ts    Eligibility, queue, worker, transport
 │   │   └── util.ts            JSON/HTTP helpers, hashing, rate limiting
@@ -234,7 +234,7 @@ Changing `ADMIN_PASSWORD` after the first boot has no effect — the credentials
 in the `settings` table. Delete the `admin_password_hash` row (or the database) to re-seed.
 
 Runtime settings that do **not** need a redeploy live in the admin panel’s Settings tab:
-free push per day, unlocked signal count, history window, contact links, support e-mail.
+unlocked signal count, history window, contact links, support e-mail.
 
 ---
 
@@ -259,7 +259,7 @@ and a busy timeout are enabled, and foreign keys are on.
 
 | Table | Purpose |
 | --- | --- |
-| `users` | email, password hash, plan, `pro_start_at`/`pro_end_at`, suspended, timezone |
+| `users` | email, password hash, plan, `partner_start_at`/`partner_end_at`, suspended, timezone |
 | `sessions` | bearer tokens for signed-in users |
 | `admin_tokens` | bearer tokens for the staff panel |
 | `devices` | one row per install: push token, owner, notification preferences |
@@ -323,7 +323,7 @@ INSERT INTO signal_edits (one row per changed field, with old → new)
    ▼
 setImmediate → enqueueSignalDistribution(id, { kind: 'UPDATE', revision })
    │   audience = devices that already received THIS signal (SENT/DELIVERED)
-   │   the free daily limit does not apply — a correction always goes out
+   │   the Member daily limit does not apply — a correction always goes out
    ▼
 notification: "Updated: BUY BTCUSDT" / "Entry price: 65000 → 65500 · …"
    ▼
@@ -346,8 +346,8 @@ is decided by `evaluateEligibility()` and the reason is stored for the logs:
 | Trading signals turned off | `trading_signals_off` |
 | BUY/SELL preference off | `buy_pref_off` / `sell_pref_off` |
 | User suspended | `user_suspended` |
-| Pro active (`plan = PRO`, not suspended, `pro_end_at` in the future) | sent — `pro_active` |
-| Free (no push cap) | sent — `free_quota` |
+| Partner active (`plan = PARTNER`, not suspended, `partner_end_at` in the future) | sent — `partner_active` |
+| Member (no push cap) | sent — `member_quota` |
 | Any edit notice for a signal the device already has | sent — `signal_updated` |
 
 Retries: up to 5 attempts with exponential backoff (5s, 10s, 20s, 40s, 80s). An `NotRegistered`
@@ -384,14 +384,14 @@ than the balance. Spread, commission, funding and slippage are explicitly exclud
 
 | Role | Auth | Can |
 | --- | --- | --- |
-| Guest / Free | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone, receive up to 2 pushes per day |
-| Pro | email + password, plan granted by staff | Everything above with **all** signals unlocked and unlimited real-time pushes while `pro_end_at` is in the future |
+| Guest / Member | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone |
+| Partner | email + password, tier granted by staff | Everything above with **all** signals unlocked and real-time pushes while `partner_end_at` is in the future |
 | Suspended | — | Treated as ineligible for all notifications |
-| Admin | username + password → bearer token | Users and Pro durations, suspend, create/edit/close/delete signals, delivery + webhook logs, runtime settings |
+| Admin | username + password → bearer token | Users and Partner durations, suspend, create/edit/close/delete signals, delivery + webhook logs, runtime settings |
 
-Enforcement is server-side. Locked signals are **redacted before serialisation** — a free
+Enforcement is server-side. Locked signals are **redacted before serialisation** — a Member
 client never receives the symbol, action or prices of a locked signal, and
-`GET /api/signals/:id` answers `403 pro_required` for it. Every `/api/admin/*` route calls the
+`GET /api/signals/:id` answers `403 partner_required` for it. Every `/api/admin/*` route calls the
 same `requireAdmin()` guard.
 
 ---
@@ -403,8 +403,8 @@ same `requireAdmin()` guard.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/health` | Liveness probe |
-| GET | `/api/config` | Contact links, free limits, performance stats |
-| GET | `/api/signals?status=open\|closed\|all&market=&page=&pageSize=` | Paginated, newest first, redacted per plan |
+| GET | `/api/config` | Contact links, access limits, performance stats |
+| GET | `/api/signals?status=open\|closed\|all&market=&page=&pageSize=` | Paginated, newest first, redacted per tier |
 | GET | `/api/signals/:id` | Full signal + `changes[]`; `403` when locked |
 | POST | `/api/devices/push-token` | Register/refresh a device and its preferences |
 | DELETE | `/api/devices/push-token/:id` | Unregister (own device only) |
@@ -427,7 +427,7 @@ same `requireAdmin()` guard.
 | POST | `/api/admin/login` · `/api/admin/logout` | Returns / revokes a bearer token |
 | GET | `/api/admin/overview` | Counters, performance, edited-signal count |
 | GET | `/api/admin/users?q=` | Search by email |
-| POST | `/api/admin/users/:id/plan` | `{ plan: 'PRO', days: 30 }` or `{ plan: 'FREE' }` |
+| POST | `/api/admin/users/:id/plan` | `{ plan: 'PARTNER', days: 30 }` or `{ plan: 'MEMBER' }` |
 | POST | `/api/admin/users/:id/suspend` | `{ suspended: true\|false }` |
 | GET | `/api/admin/signals?page=` | All signals, unredacted |
 | POST | `/api/admin/signals` | Publish manually — same pipeline as a webhook |
@@ -516,11 +516,11 @@ the desktop footer (hidden on mobile). Change the credentials via the `ADMIN_USE
 
 | Tab | Contents |
 | --- | --- |
-| Overview | Users, active Pro, devices, signals, push sent/failed, edited signals, win rate, webhook-secret warning |
-| Users | Search, grant Pro for 7/30/90/180/365 days, revert to Free, suspend |
+| Overview | Users, active Partner, devices, signals, push sent/failed, edited signals, win rate, webhook-secret warning |
+| Users | Search, grant Partner for 7/30/90/180/365 days, revert to Member, suspend |
 | Signals | Publish manually (with a **+ Add take profit** repeater), table with Entry, **Take profits**, **Close price**, Status, Edit / Close / Delete, and a “Delete sample data” button |
 | Delivery logs | Latest 100 deliveries (with NEW / UPDATE type and skip reason) and 50 webhook events |
-| Settings | Free push per day, unlocked signal count, history window, Telegram/Website/Instagram/e-mail |
+| Settings | Unlocked signal count, history window, Telegram/Website/Instagram/e-mail |
 
 **Editing a published signal:** Signals → **Edit**. Change any field, add or remove take-profit
 levels (with reorder arrows), optionally untick “Notify everyone who already received this
@@ -535,12 +535,12 @@ Start both processes first (§5.1).
 ### 13.1 Manual walkthrough
 
 1. **First run** — accept the risk disclaimer, pick a timezone.
-2. **Signals** — newest first. As a free user the first N open signals of the day are readable; the rest are blurred.
-3. **Locked card** — tapping one says “Pro required” instead of showing details.
+2. **Signals** — newest first. As a Member the first N open signals of the day are readable; the rest are blurred.
+3. **Locked card** — tapping one says “Partner required” instead of showing details.
 4. **History** — closed signals from the last 14 days, with result and P/L.
 5. **Calculator** — balance, risk %, entry, stop → units (crypto) or lots (forex).
 6. **Settings** — change the timezone, toggle notification preferences.
-7. **Account** — sign up, then in Admin → Users grant Pro for 30 days; every signal unlocks.
+7. **Account** — sign up, then in Admin → Users grant Partner for 30 days; every signal unlocks.
 8. **Edit flow** — Admin → Signals → Edit, change a price and save: the card gains an “Edited”
    badge and the detail page a full change history.
 
@@ -560,9 +560,9 @@ Expect `202 {"ok":true,"duplicate":false,...}` and, seconds later, a system noti
 it opens that signal. **Replay the same `id`** and you get `200 {"duplicate":true}` with **no
 second notification** — that is the idempotency guarantee.
 
-Free users get a push for every signal, but once they've passed the daily
-`free_visible_count` limit the push is a generic "New signal released" alert with no
-symbol/price. Pro users get the full text. Every skip reason is visible in
+Members get a push for every signal, but once they've passed the daily
+`member_visible_count` limit the push is a generic "New signal released" alert with no
+symbol/price. Partners get the full text. Every skip reason is visible in
 **Admin → Delivery logs**.
 
 ### 13.3 Automated API suite
@@ -584,9 +584,9 @@ Coverage:
 * valid webhook, invalid secret, missing action, unsupported action
 * idempotency (a replayed alert returns the same signal id and creates nothing)
 * multiple take profits via `takeProfits: []` and via `tp1`/`tp2`
-* free vs pro: locked items in the list, `403` on a locked detail, open history
-* auth: weak password, duplicate email, wrong password, new accounts start on Free
-* admin: unauthenticated rejection, bad credentials, granting/revoking Pro
+* member vs partner: locked items in the list, `403` on a locked detail, open history
+* auth: weak password, duplicate email, wrong password, new accounts start as Member
+* admin: unauthenticated rejection, bad credentials, granting/revoking Partner
 * the notification queue: delivery, `type` + `signalId` payload, acknowledgement
 * editing a published signal: auth required, invalid action rejected, 404 for a missing id,
   take-profit replacement, revision bump, change log, no-op edits, the UPDATE notification

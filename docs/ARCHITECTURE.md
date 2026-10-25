@@ -32,7 +32,7 @@ mobile app  ──► GET /api/notifications/pending ──► system notificati
 | HTTP router / controllers | `server/index.ts` |
 | Signal service + repository | `server/core/signals.ts` |
 | Distribution, eligibility, worker, transport | `server/core/distribution.ts` |
-| Auth, sessions, admin tokens, PRO expiry job | `server/core/auth.ts` |
+| Auth, sessions, admin tokens, PARTNER expiry job | `server/core/auth.ts` |
 | Schema, settings, seed | `server/core/schema.ts` |
 | Helpers (JSON, hashing, rate limit, routing) | `server/core/util.ts` |
 | Database handle (platform-managed) | `server/lib/db.ts` |
@@ -139,15 +139,15 @@ Responses: `202` accepted · `200 {duplicate:true}` replay · `401` bad secret �
 
 ---
 
-## 6. Plans, eligibility and limits
+## 6. Tiers, eligibility and limits
 
 A push is queued for a device only when **all** hold:
-plan is PRO with `proEndAt` in the future · not suspended · notifications
+plan is PARTNER with `partnerEndAt` in the future · not suspended · notifications
 enabled · trading signals enabled · the BUY/SELL preference matches the action.
-Free devices are always allowed; the push text is generic when they are past the
-`free_visible_count` window.
+Member devices are always allowed; the push text is generic when they are past the
+`member_visible_count` window.
 
-In-app reading: free viewers see the first `free_visible_count` open signals of
+In-app reading: Members see the first `member_visible_count` open signals of
 the current day in full (default 3); the rest are blurred and locked, and
 `GET /api/signals/:id` returns 403 for them. **Closed history is unlocked for everyone** for
 `history_days` days (default 14). All three values are editable in the admin panel.
@@ -205,13 +205,13 @@ npm run test:api      # shell 2
 | --- | --- |
 | Webhook | valid alert accepted · invalid secret rejected · missing action rejected · unsupported action rejected · replay deduped to the same id |
 | Devices | registration · re-registration does not duplicate |
-| Free vs Pro | anonymous treated as free · locked items present · locked detail returns 403 · Pro sees everything unlocked · Pro can open any detail |
+| Member vs Partner | anonymous treated as a Member · locked items present · locked detail returns 403 · Partner sees everything unlocked · Partner can open any detail |
 | History | closed signals never locked |
-| Auth | weak password rejected · signup · duplicate email rejected · wrong password rejected · new user starts FREE |
-| Admin | unauthenticated 401 · wrong credentials 401 · login · list users · grant PRO with duration · downgrade · read logs |
+| Auth | weak password rejected · signup · duplicate email rejected · wrong password rejected · new user starts MEMBER |
+| Admin | unauthenticated 401 · wrong credentials 401 · login · list users · grant Partner with duration · downgrade · read logs |
 | Queue | notification queued for the device · payload carries `type=TRADING_SIGNAL` + `signalId` · ack removes it |
 
-Manual checks worth running once: set `free_visible_count` to 1, publish two
+Manual checks worth running once: set `member_visible_count` to 1, publish two
 signals, and confirm the second is blurred and its push is generic; grant a user
-7 days of Pro and confirm the profile countdown; wait for a `proEndAt` to pass
+7 days of Partner and confirm the profile countdown; wait for a `partnerEndAt` to pass
 and confirm the minute-interval job downgrades the account.
