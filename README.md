@@ -343,8 +343,6 @@ is decided by `evaluateEligibility()` and the reason is stored for the logs:
 | --- | --- |
 | Device disabled (invalid token) | `device_disabled` |
 | Notifications turned off | `notifications_off` |
-| Trading signals turned off | `trading_signals_off` |
-| BUY/SELL preference off | `buy_pref_off` / `sell_pref_off` |
 | User suspended | `user_suspended` |
 | Partner active (`plan = PARTNER`, not suspended, `partner_end_at` in the future) | sent — `partner_active` |
 | Member (no push cap) | sent — `member_quota` |
@@ -628,7 +626,7 @@ and nothing is lost — the items simply wait.
 | --- | --- |
 | Webhook returns `401` | Secret mismatch. Compare `TRADINGVIEW_WEBHOOK_SECRET` with the alert message (never logged — check the value, not the log). |
 | Webhook returns `422` | `symbol` or `action` missing, or an action other than BUY/SELL/CLOSE. |
-| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `sell_pref_off`, …). |
+| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `device_disabled`, …). |
 | Notifications only arrive with the app open | No Firebase service account is configured (`GOOGLE_APPLICATION_CREDENTIALS` unset). That is the expected fallback behaviour. |
 | An edit sent no notification | Nothing actually changed, `notify` was unticked, or no device had received the original signal yet (SENT/DELIVERED). |
 | Admin password change ignored | Credentials are seeded once. Remove the `admin_password_hash` setting row and restart. |

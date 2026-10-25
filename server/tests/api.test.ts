@@ -66,7 +66,7 @@ async function main(): Promise<void> {
     token: deviceToken,
     platform: 'android',
     timezone: 'UTC',
-    preferences: { notificationsEnabled: true, tradingSignalsEnabled: true, buySignalsEnabled: true, sellSignalsEnabled: true },
+    preferences: { notificationsEnabled: true },
   });
   check('registers a device', reg.status === 200 && typeof reg.json.id === 'number', reg.json);
 

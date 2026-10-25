@@ -57,9 +57,9 @@ export default function Contact(): React.ReactElement {
             Our team activates Partner status on your account — usually within 24 hours.
           </li>
         </ol>
-        <p className="mt-3 text-xs text-slate-500">
-          Partner activation is handled by our team outside the app.
-        </p>
+        {/*<p className="mt-3 text-xs text-slate-500">*/}
+        {/*  Partner activation is handled by our team.*/}
+        {/*</p>*/}
       </Panel>
 
       <div className="grid gap-3 sm:grid-cols-2">

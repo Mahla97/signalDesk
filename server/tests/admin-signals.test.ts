@@ -94,9 +94,6 @@ async function main(): Promise<void> {
     timezone: 'UTC',
     preferences: {
       notificationsEnabled: true,
-      tradingSignalsEnabled: true,
-      buySignalsEnabled: true,
-      sellSignalsEnabled: true,
     },
   });
 

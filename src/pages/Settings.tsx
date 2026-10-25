@@ -90,30 +90,6 @@ export default function Settings(): React.ReactElement {
             onChange={(v) => update({ notificationsEnabled: v })}
             testId="toggle-notifications"
           />
-          <Toggle
-            label="Trading signals"
-            description="New BUY / SELL / CLOSE alerts from our strategies."
-            checked={prefs.tradingSignalsEnabled}
-            onChange={(v) => update({ tradingSignalsEnabled: v })}
-            testId="toggle-trading-signals"
-            disabled={!prefs.notificationsEnabled}
-          />
-          <Toggle
-            label="BUY signals"
-            description="Long entries."
-            checked={prefs.buySignalsEnabled}
-            onChange={(v) => update({ buySignalsEnabled: v })}
-            testId="toggle-buy-signals"
-            disabled={!prefs.notificationsEnabled || !prefs.tradingSignalsEnabled}
-          />
-          <Toggle
-            label="SELL signals"
-            description="Short entries."
-            checked={prefs.sellSignalsEnabled}
-            onChange={(v) => update({ sellSignalsEnabled: v })}
-            testId="toggle-sell-signals"
-            disabled={!prefs.notificationsEnabled || !prefs.tradingSignalsEnabled}
-          />
         </div>
 
         <p className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-400" data-testid="settings-quota">

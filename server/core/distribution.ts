@@ -13,9 +13,6 @@ export type DeviceRow = {
   user_id: number | null;
   platform: string;
   notifications_enabled: number;
-  trading_signals_enabled: number;
-  buy_signals_enabled: number;
-  sell_signals_enabled: number;
   disabled: number;
   timezone: string | null;
   created_at: string;
@@ -44,15 +41,6 @@ export function evaluateEligibility(
 ): Eligibility {
   if (device.disabled) return { eligible: false, reason: 'device_disabled' };
   if (!device.notifications_enabled) return { eligible: false, reason: 'notifications_off' };
-  if (!device.trading_signals_enabled) return { eligible: false, reason: 'trading_signals_off' };
-
-  const action = signal.action.toUpperCase();
-  if (action === 'BUY' && !device.buy_signals_enabled) {
-    return { eligible: false, reason: 'buy_pref_off' };
-  }
-  if (action === 'SELL' && !device.sell_signals_enabled) {
-    return { eligible: false, reason: 'sell_pref_off' };
-  }
 
   if (device.suspended) return { eligible: false, reason: 'user_suspended' };
 

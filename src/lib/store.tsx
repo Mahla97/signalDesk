@@ -27,9 +27,6 @@ import type { AppConfig, AppUser, NotificationPreferences, PendingNotification }
 
 const DEFAULT_PREFS: NotificationPreferences = {
   notificationsEnabled: true,
-  tradingSignalsEnabled: true,
-  buySignalsEnabled: true,
-  sellSignalsEnabled: true,
 };
 
 const DEFAULT_CONFIG: AppConfig = {

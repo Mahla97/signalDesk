@@ -65,9 +65,6 @@ CREATE TABLE IF NOT EXISTS devices (
   user_id INTEGER,
   platform TEXT NOT NULL DEFAULT 'android',
   notifications_enabled INTEGER NOT NULL DEFAULT 1,
-  trading_signals_enabled INTEGER NOT NULL DEFAULT 1,
-  buy_signals_enabled INTEGER NOT NULL DEFAULT 1,
-  sell_signals_enabled INTEGER NOT NULL DEFAULT 1,
   disabled INTEGER NOT NULL DEFAULT 0,
   timezone TEXT,
   created_at TEXT NOT NULL,
@@ -300,6 +297,21 @@ function migrateTierNames(): void {
   db.prepare("UPDATE settings SET key = 'member_visible_count' WHERE key = 'free_visible_count'").run();
 }
 
+/** Drop the sub-notification toggles replaced by the single master switch. */
+function migrateDeviceNotificationPrefs(): void {
+  const cols = tableColumns('devices');
+  for (const col of ['trading_signals_enabled', 'buy_signals_enabled', 'sell_signals_enabled']) {
+    if (cols.includes(col)) {
+      try {
+        db.exec(`ALTER TABLE devices DROP COLUMN ${col}`);
+        console.log(`[migrate] dropped devices.${col}`);
+      } catch (err) {
+        console.error(`[migrate] failed to drop devices.${col}`, err);
+      }
+    }
+  }
+}
+
 /* --------------------------------- seeding -------------------------------- */
 
 /** Sample rows so a fresh install is not an empty screen. Clearly flagged as samples. */
@@ -385,6 +397,7 @@ export function initDatabase(): void {
   migrateDeliveryJobKindUnique();
   backfillTakeProfits();
   migrateTierNames();
+  migrateDeviceNotificationPrefs();
 
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     const exists = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);

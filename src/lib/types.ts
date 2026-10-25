@@ -71,9 +71,6 @@ export type AppConfig = {
 
 export type NotificationPreferences = {
   notificationsEnabled: boolean;
-  tradingSignalsEnabled: boolean;
-  buySignalsEnabled: boolean;
-  sellSignalsEnabled: boolean;
 };
 
 export type PendingNotification = {

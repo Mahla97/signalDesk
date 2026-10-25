@@ -236,7 +236,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       db.prepare(
         `UPDATE devices SET user_id = ?, platform = ?, timezone = ?, disabled = 0, last_seen_at = ?,
            push_token = COALESCE(?, push_token),
-           notifications_enabled = ?, trading_signals_enabled = ?, buy_signals_enabled = ?, sell_signals_enabled = ?
+           notifications_enabled = ?
          WHERE id = ?`,
       ).run(
         user ? user.id : existing.user_id,
@@ -244,28 +244,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         timezone ?? existing.timezone,
         now,
         pushToken,
-        bool(prefs.tradingNotificationsEnabled ?? prefs.notificationsEnabled, existing.notifications_enabled),
-        bool(prefs.tradingSignalsEnabled, existing.trading_signals_enabled),
-        bool(prefs.buySignalsEnabled, existing.buy_signals_enabled),
-        bool(prefs.sellSignalsEnabled, existing.sell_signals_enabled),
+        bool(prefs.notificationsEnabled, existing.notifications_enabled),
         existing.id,
       );
     } else {
       db.prepare(
         `INSERT INTO devices
-           (token, push_token, user_id, platform, timezone, notifications_enabled, trading_signals_enabled,
-            buy_signals_enabled, sell_signals_enabled, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (token, push_token, user_id, platform, timezone, notifications_enabled, created_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         token,
         pushToken,
         user ? user.id : null,
         platform,
         timezone,
-        bool(prefs.tradingNotificationsEnabled ?? prefs.notificationsEnabled),
-        bool(prefs.tradingSignalsEnabled),
-        bool(prefs.buySignalsEnabled),
-        bool(prefs.sellSignalsEnabled),
+        bool(prefs.notificationsEnabled),
         now,
         now,
       );
@@ -277,9 +270,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       token: device.token,
       preferences: {
         notificationsEnabled: Boolean(device.notifications_enabled),
-        tradingSignalsEnabled: Boolean(device.trading_signals_enabled),
-        buySignalsEnabled: Boolean(device.buy_signals_enabled),
-        sellSignalsEnabled: Boolean(device.sell_signals_enabled),
       },
     });
     return;
