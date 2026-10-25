@@ -429,19 +429,11 @@ function UsersTab(): React.ReactElement {
                   ))}
                 </select>
                 <Button
-                  onClick={() => void setPlan(user, 'PRO')}
+                  onClick={() => void setPlan(user, user.plan === 'PRO' ? 'FREE' : 'PRO')}
                   disabled={pending[user.id]}
-                  testId={`admin-grant-pro-${user.id}`}
+                  testId={`admin-toggle-plan-${user.id}`}
                 >
-                  Grant Pro
-                </Button>
-                <Button
-                  variant="ghost"
-                  onClick={() => void setPlan(user, 'FREE')}
-                  disabled={pending[user.id]}
-                  testId={`admin-set-free-${user.id}`}
-                >
-                  Set Free
+                  {user.plan === 'PRO' ? 'Set Free' : 'Grant Pro'}
                 </Button>
                 <Button
                   variant="danger"
