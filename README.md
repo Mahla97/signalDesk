@@ -41,7 +41,7 @@ staff management panel.
 | Calculator | Position-size / risk calculator for crypto (units) and forex (lots) |
 | Settings | Timezone, notification preferences, full disclaimer |
 | Contact | Telegram / Website / Instagram / e-mail — also the route to becoming a Partner |
-| Account | Email + password sign-up/sign-in, Partner status and remaining time |
+| Account | Email + password sign-up/sign-in, Partner status and remaining time, password reset, delete account |
 
 **Backend**
 
@@ -229,6 +229,13 @@ safe default — but the first two must be set before going live.
 | `ADMIN_USERNAME` | `admin` | Admin username, stored on first boot. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON. When set, notifications are pushed through FCM HTTP v1 so they arrive with the app closed. Without it the app pulls its queue while running. |
 | `PORT` | `3001` | Port the API listens on (assigned by the host in production). |
+| `APP_URL` | `http://localhost:5173` | Public origin used to build password-reset links. |
+| `SMTP_HOST` | — | SMTP host for password-reset email. When unset, the reset link is logged instead of emailed. |
+| `SMTP_PORT` | `587` | SMTP port. |
+| `SMTP_SECURE` | `false` | `true` for TLS (port 465). |
+| `SMTP_USER` | — | SMTP username. |
+| `SMTP_PASS` | — | SMTP password. |
+| `SMTP_FROM` | `SMTP_USER` | From address for reset emails. |
 
 Changing `ADMIN_PASSWORD` after the first boot has no effect — the credentials are already
 in the `settings` table. Delete the `admin_password_hash` row (or the database) to re-seed.
@@ -411,6 +418,9 @@ same `requireAdmin()` guard.
 | POST | `/api/auth/signup` · `/api/auth/login` · `/api/auth/logout` | Email + password |
 | GET | `/api/auth/me` | Current user + device push usage |
 | PATCH | `/api/auth/timezone` | Persist the chosen timezone |
+| POST | `/api/auth/forgot-password` | `{ email }` — always `200`; emails a reset link when the account exists |
+| POST | `/api/auth/reset-password` | `{ token, password }` — sets the new password |
+| DELETE | `/api/auth/me` | Delete the signed-in account |
 
 ### Webhook
 
@@ -427,6 +437,7 @@ same `requireAdmin()` guard.
 | GET | `/api/admin/users?q=` | Search by email |
 | POST | `/api/admin/users/:id/plan` | `{ plan: 'PARTNER', days: 30 }` or `{ plan: 'MEMBER' }` |
 | POST | `/api/admin/users/:id/suspend` | `{ suspended: true\|false }` |
+| DELETE | `/api/admin/users/:id` | Delete a user account |
 | GET | `/api/admin/signals?page=` | All signals, unredacted |
 | POST | `/api/admin/signals` | Publish manually — same pipeline as a webhook |
 | **PATCH** | **`/api/admin/signals/:id`** | **Edit a published signal** |
@@ -515,7 +526,7 @@ the desktop footer (hidden on mobile). Change the credentials via the `ADMIN_USE
 | Tab | Contents |
 | --- | --- |
 | Overview | Users, active Partner, devices, signals, push sent/failed, edited signals, win rate, webhook-secret warning |
-| Users | Search, grant Partner for 7/30/90/180/365 days, revert to Member, suspend |
+| Users | Search, grant Partner for 7/30/90/180/365 days, revert to Member, suspend, delete |
 | Signals | Publish manually (with a **+ Add take profit** repeater), table with Entry, **Take profits**, **Close price**, Status, Edit / Close / Delete, and a “Delete sample data” button |
 | Delivery logs | Latest 100 deliveries (with NEW / UPDATE type and skip reason) and 50 webhook events |
 | Settings | Unlocked signal count, history window, Telegram/Website/Instagram/e-mail |
@@ -584,13 +595,15 @@ Coverage:
 * multiple take profits via `takeProfits: []` and via `tp1`/`tp2`
 * member vs partner: locked items in the list, `403` on a locked detail, open history
 * auth: weak password, duplicate email, wrong password, new accounts start as Member
+* password reset: invalid email rejected, known/unknown email accepted silently, bogus token rejected
 * admin: unauthenticated rejection, bad credentials, granting/revoking Partner
+* delete account: sign up, delete, account gone
 * the notification queue: delivery, `type` + `signalId` payload, acknowledgement
 * editing a published signal: auth required, invalid action rejected, 404 for a missing id,
   take-profit replacement, revision bump, change log, no-op edits, the UPDATE notification
   reaching devices that already had the signal, and close-price recording
 
-**Expected result: `48 passed, 0 failed`.**
+**Expected result: `64 passed, 0 failed`.**
 
 The suite runs against a live server and **writes real rows**, so point it at a disposable
 database — not production. To protect a database you care about, move `server/data/app.db`,

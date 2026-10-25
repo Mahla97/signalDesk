@@ -10,8 +10,10 @@ import {
   adminLogin,
   adminLogout,
   bearer,
+  createPasswordReset,
   createUser,
   currentUser,
+  deleteUser,
   expirePartnerAccess,
   findUserByEmail,
   isAdmin,
@@ -19,9 +21,11 @@ import {
   login,
   logout,
   publicUser,
+  resetPasswordWithToken,
   touchUser,
   type UserRow,
 } from './core/auth.js';
+import { sendPasswordResetEmail } from './core/email.js';
 import {
   closeSignalById,
   deleteSampleSignals,
@@ -59,6 +63,13 @@ import {
   toNumber,
   toStr,
 } from './core/util.js';
+
+// Load a local .env file when present (gitignored). Host env vars always win.
+try {
+  process.loadEnvFile();
+} catch {
+  /* no .env file — environment comes from the host */
+}
 
 initDatabase();
 startWorker();
@@ -453,6 +464,82 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     return;
   }
 
+  if (method === 'POST' && path === '/api/auth/forgot-password') {
+    const ip = clientIp(req);
+    if (!rateLimit('forgot:' + ip, 5, 15 * 60_000)) {
+      sendJson(res, 429, { error: 'too many attempts, please try again later' });
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(req);
+    } catch {
+      sendJson(res, 400, { error: 'invalid json body' });
+      return;
+    }
+    const email = (toStr(body.email, 120) ?? '').toLowerCase();
+    if (!isEmail(email)) {
+      sendJson(res, 422, { error: 'Please enter a valid email address.' });
+      return;
+    }
+    const user = findUserByEmail(email);
+    if (user) {
+      const token = createPasswordReset(user.id);
+      const base = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+      const resetUrl = `${base}/reset-password?token=${token}`;
+      try {
+        await sendPasswordResetEmail(email, resetUrl);
+      } catch (err) {
+        console.error('[auth] password reset email failed', err);
+      }
+      if (process.env.NODE_ENV !== 'production') {
+        // Dev convenience: expose the reset link so the flow works without SMTP.
+        sendJson(res, 200, { ok: true, devResetUrl: resetUrl });
+        return;
+      }
+    }
+    // Always the same response so we don't reveal which emails have accounts.
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === 'POST' && path === '/api/auth/reset-password') {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(req);
+    } catch {
+      sendJson(res, 400, { error: 'invalid json body' });
+      return;
+    }
+    const token = toStr(body.token, 200) ?? '';
+    const password = toStr(body.password, 200) ?? '';
+    if (!token) {
+      sendJson(res, 422, { error: 'This reset link is invalid.' });
+      return;
+    }
+    if (password.length < 8) {
+      sendJson(res, 422, { error: 'Password must be at least 8 characters.' });
+      return;
+    }
+    if (!resetPasswordWithToken(token, password)) {
+      sendJson(res, 400, { error: 'This reset link is invalid or has expired.' });
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === 'DELETE' && path === '/api/auth/me') {
+    const user = currentUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
+    deleteUser(user.id);
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
   if (method === 'POST' && path === '/api/auth/logout') {
     const token = bearer(req);
     if (token) logout(token);
@@ -632,6 +719,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     sendJson(res, 200, { user: publicUser(updated) });
+    return;
+  }
+
+  params = match('/api/admin/users/:id', path);
+  if (method === 'DELETE' && params) {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(params.id);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
+    if (!user) {
+      sendJson(res, 404, { error: 'user not found' });
+      return;
+    }
+    deleteUser(id);
+    sendJson(res, 200, { ok: true });
     return;
   }
 

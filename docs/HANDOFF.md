@@ -36,7 +36,7 @@ No ORM, no Express, no external services required to run.
 
 ## 3. Running it locally
 
-Requires Node 18+ (dev box has 24) and, for Android, JDK 21.
+Requires Node 22.5+ (the backend uses `node:sqlite`) and, for Android, JDK 21.
 
 ```bash
 npm install          # once
@@ -83,7 +83,7 @@ Cleartext `http://` is allowed in debug only (`capacitor.config.ts` +
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the built app |
 | `npm run server` | Start the API (`server/index.ts` via tsx) |
-| `npm run test:api` | Full API suite (48 checks) against a live server |
+| `npm run test:api` | Full API suite (64 checks) against a live server |
 | `npm run test:admin` | Admin add/edit/delete lifecycle suite (14 checks) |
 
 Tests run against a **live server** and write real rows — use a disposable DB.
@@ -104,6 +104,13 @@ start on the guessable defaults, so `TRADINGVIEW_WEBHOOK_SECRET` and
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON → enables FCM push. |
 | `FCM_SERVICE_ACCOUNT_JSON` | — | Alternative: the service-account JSON **inline** (no file). |
 | `PORT` | `3001` | API port. |
+| `APP_URL` | `http://localhost:5173` | Public origin used to build password-reset links. |
+| `SMTP_HOST` | — | SMTP host for password-reset email. When unset, the reset link is logged instead of emailed. |
+| `SMTP_PORT` | `587` | SMTP port. |
+| `SMTP_SECURE` | `false` | `true` for TLS (port 465). |
+| `SMTP_USER` | — | SMTP username. |
+| `SMTP_PASS` | — | SMTP password. |
+| `SMTP_FROM` | `SMTP_USER` | From address for reset emails. |
 
 Client-side (build-time):
 
@@ -145,6 +152,7 @@ server/
     signals.ts        ingestion, edit + change log, soft-delete, redaction
     distribution.ts   eligibility, queue, worker, FCM transport
     util.ts           JSON/HTTP helpers, hashing, rate limiting
+    email.ts          password-reset email (SMTP, optional)
   tests/
     api.test.ts       full API suite
     admin-signals.test.ts   add/edit/delete lifecycle suite
@@ -154,7 +162,7 @@ src/
   components/        Layout, SignalCard, TimezonePicker, ui
   lib/               api, store (app state), push, nativePush, useSignals, time, types, …
   pages/             Onboarding, Feed, SignalDetails, History, Calculator, Settings,
-                     Contact, Profile, Admin
+                     Contact, Profile, ResetPassword, Admin
 android/             Capacitor wrapper
 docs/                docs (this file, ARCHITECTURE, firebase keys)
 ```
@@ -267,6 +275,11 @@ The feed does **not** wait for a manual reload:
 - `allowMixedContent` is now opt-in via `CAPACITOR_ALLOW_MIXED_CONTENT=true` (off in release).
 - Production guards: server refuses to boot on default webhook secret / admin password.
 - Renamed the two tiers Free → Member and Pro → Partner; removed all payment/upgrade language from the UI.
+- Admin: delete a user from the Users tab (`DELETE /api/admin/users/:id`).
+- Forgot-password returns a `devResetUrl` in non-production so the reset flow is testable without SMTP.
+- Notifications collapsed to a single master switch (removed trading/BUY/SELL sub-preferences).
+- Account deletion: `DELETE /api/auth/me` + a confirmation flow in Profile.
+- Password reset: `forgot-password` / `reset-password` endpoints + email link (SMTP) + a `/reset-password` screen.
 
 ## 14. Before Google Play release — checklist
 
@@ -275,8 +288,9 @@ Code fixes are done; these items need console/account access and are not yet don
 - **Privacy policy URL + Data Safety form.** Publish a privacy policy and link it
   in the Play Console; fill out the Data Safety form (what data is collected, how
   it is used, how it is deleted).
-- **In-app account deletion.** Play requires users to request account + data
-  deletion in-app (and a web path). Add a deletion flow, not just the link.
+- **Account-deletion web path.** In-app deletion is implemented; Play also wants a
+  web URL where users can request deletion outside the app. Add that link in the
+  console.
 - **Financial-services policy review.** Trading-signal content may require a
   financial-services declaration/review — confirm eligibility before submit.
 - **Restrict the Firebase Android API key.** `android/app/google-services.json`

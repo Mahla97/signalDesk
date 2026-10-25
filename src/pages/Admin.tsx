@@ -322,6 +322,7 @@ function UsersTab(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<Record<number, number>>({});
   const [pending, setPending] = useState<Record<number, boolean>>({});
+  const [confirmId, setConfirmId] = useState<number | null>(null);
 
   const load = useCallback(async (q: string) => {
     setLoading(true);
@@ -371,6 +372,19 @@ function UsersTab(): React.ReactElement {
       setError(err instanceof ApiError ? err.message : 'Could not update the user.');
     } finally {
       setPending((c) => ({ ...c, [user.id]: false }));
+    }
+  }
+
+  async function deleteUser(id: number): Promise<void> {
+    setPending((c) => ({ ...c, [id]: true }));
+    try {
+      await api(`/admin/users/${id}`, { method: 'DELETE', admin: true });
+      setUsers((current) => current.filter((u) => u.id !== id));
+      setConfirmId(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not delete the user.');
+    } finally {
+      setPending((c) => ({ ...c, [id]: false }));
     }
   }
 
@@ -443,6 +457,31 @@ function UsersTab(): React.ReactElement {
                 >
                   {user.suspended ? 'Unsuspend' : 'Suspend'}
                 </Button>
+                {confirmId === user.id ? (
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-rose-300">Delete this account?</span>
+                    <Button
+                      variant="danger"
+                      onClick={() => void deleteUser(user.id)}
+                      disabled={pending[user.id]}
+                      testId={`admin-confirm-delete-${user.id}`}
+                    >
+                      {pending[user.id] ? 'Deleting…' : 'Confirm'}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmId(null)} disabled={pending[user.id]}>
+                      Cancel
+                    </Button>
+                  </span>
+                ) : (
+                  <Button
+                    variant="danger"
+                    onClick={() => setConfirmId(user.id)}
+                    disabled={pending[user.id]}
+                    testId={`admin-delete-user-${user.id}`}
+                  >
+                    Delete
+                  </Button>
+                )}
               </div>
             </Panel>
           ))}

@@ -196,6 +196,37 @@ async function main(): Promise<void> {
   const meUser = me.json.user as { plan: string } | null;
   check('new account starts as a Member', meUser?.plan === 'MEMBER', meUser);
 
+  /* ------------------------------ password reset ----------------------------- */
+  console.log('\npassword reset');
+  const resetEmail = `reset_${stamp}@example.com`;
+  const resetSignup = await post('/api/auth/signup', { email: resetEmail, password: 'OriginalPass123' });
+  check('password-reset user can sign up', resetSignup.status === 201, resetSignup.json);
+
+  const forgotBad = await post('/api/auth/forgot-password', { email: 'not-an-email' });
+  check('forgot password rejects an invalid email', forgotBad.status === 422, forgotBad.json);
+
+  const forgotUnknown = await post('/api/auth/forgot-password', { email: 'nobody_' + stamp + '@example.com' });
+  check('forgot password is silent for unknown emails', forgotUnknown.status === 200 && forgotUnknown.json.ok === true, forgotUnknown.json);
+
+  const forgot = await post('/api/auth/forgot-password', { email: resetEmail });
+  check('forgot password accepts a known email', forgot.status === 200 && forgot.json.ok === true, forgot.json);
+
+  const devResetUrl = forgot.json.devResetUrl as string | undefined;
+  const resetToken = devResetUrl ? new URL(devResetUrl).searchParams.get('token') : null;
+  check('forgot password returns a dev reset link without SMTP', Boolean(resetToken), forgot.json);
+
+  const resetBad = await post('/api/auth/reset-password', { token: 'bogus-token', password: 'NewPassword123' });
+  check('reset password rejects a bogus token', resetBad.status === 400, resetBad.json);
+
+  const reset = await post('/api/auth/reset-password', { token: resetToken ?? '', password: 'NewPassword123' });
+  check('reset password succeeds with a valid token', reset.status === 200, reset.json);
+
+  const oldLogin = await post('/api/auth/login', { email: resetEmail, password: 'OriginalPass123' });
+  check('old password no longer works after reset', oldLogin.status === 401, oldLogin.json);
+
+  const newLogin = await post('/api/auth/login', { email: resetEmail, password: 'NewPassword123' });
+  check('new password works after reset', newLogin.status === 200, newLogin.json);
+
   /* --------------------------------- admin ---------------------------------- */
   console.log('\nadmin panel');
   const noAuth = await get('/api/admin/users');
@@ -326,6 +357,35 @@ async function main(): Promise<void> {
     const closeIt = await post(`/api/admin/signals/${signalId}/close`, { closePrice: 67000 }, adminHeaders);
     const closedSignal = (closeIt.json.signal ?? {}) as { status?: string; closePrice?: number };
     check('closing a signal records its close price', closedSignal.status === 'CLOSED' && closedSignal.closePrice === 67000, closeIt.json);
+  }
+
+  /* ----------------------------- delete account ----------------------------- */
+  console.log('\ndelete account');
+  const delEmail = `delete_${stamp}@example.com`;
+  const delSignup = await post('/api/auth/signup', { email: delEmail, password: 'StrongPass123' });
+  check('delete-account user can sign up', delSignup.status === 201, delSignup.json);
+  const delToken = String(delSignup.json.token ?? '');
+  const delMe = await get('/api/auth/me', { Authorization: 'Bearer ' + delToken });
+  check('delete-account user exists', (delMe.json.user as { email?: string } | null)?.email === delEmail, delMe.json);
+  const del = await request('DELETE', '/api/auth/me', undefined, { Authorization: 'Bearer ' + delToken });
+  check('delete account succeeds', del.status === 200 && del.json.ok === true, del.json);
+  const delAfter = await get('/api/auth/me', { Authorization: 'Bearer ' + delToken });
+  check('deleted account is gone', delAfter.json.user === null, delAfter.json);
+
+  /* --------------------------- admin delete user ---------------------------- */
+  console.log('\nadmin delete user');
+  const adminDelEmail = `admindelete_${stamp}@example.com`;
+  const adminDelSignup = await post('/api/auth/signup', { email: adminDelEmail, password: 'StrongPass123' });
+  const adminDelUser = (adminDelSignup.json.user ?? {}) as { id?: number };
+  const adminDelToken = String(adminDelSignup.json.token ?? '');
+  check('admin-delete user can sign up', adminDelSignup.status === 201 && Boolean(adminDelUser.id), adminDelSignup.json);
+
+  if (adminToken && adminDelUser.id) {
+    const adminDel = await request('DELETE', `/api/admin/users/${adminDelUser.id}`, undefined, adminHeaders);
+    check('admin can delete a user', adminDel.status === 200 && adminDel.json.ok === true, adminDel.json);
+
+    const adminDelCheck = await get('/api/auth/me', { Authorization: 'Bearer ' + adminDelToken });
+    check('admin-deleted user is gone', adminDelCheck.json.user === null, adminDelCheck.json);
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

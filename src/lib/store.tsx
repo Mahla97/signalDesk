@@ -58,6 +58,9 @@ type Store = {
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  resetPassword: (token: string, password: string) => Promise<void>;
+  deleteAccount: () => Promise<void>;
   dismissToast: (id: number) => void;
 };
 
@@ -260,6 +263,20 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
     setUser(null);
   }, []);
 
+  const requestPasswordReset = useCallback(async (email: string) => {
+    await api('/auth/forgot-password', { method: 'POST', body: { email } });
+  }, []);
+
+  const resetPassword = useCallback(async (token: string, password: string) => {
+    await api('/auth/reset-password', { method: 'POST', body: { token, password } });
+  }, []);
+
+  const deleteAccount = useCallback(async () => {
+    await api('/auth/me', { method: 'DELETE' });
+    remove(KEYS.session);
+    setUser(null);
+  }, []);
+
   const dismissToast = useCallback((id: number) => {
     setToasts((current) => current.filter((t) => t.id !== id));
   }, []);
@@ -282,6 +299,9 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       signUp,
       signOut,
       refreshUser,
+      requestPasswordReset,
+      resetPassword,
+      deleteAccount,
       dismissToast,
     }),
     [
@@ -300,6 +320,9 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       signUp,
       signOut,
       refreshUser,
+      requestPasswordReset,
+      resetPassword,
+      deleteAccount,
       dismissToast,
     ],
   );

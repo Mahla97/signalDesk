@@ -1,6 +1,6 @@
 import type { IncomingMessage } from 'node:http';
 import { db } from '../lib/db.js';
-import { header, hashPassword, nowIso, randomToken, verifyPassword } from './util.js';
+import { header, hashPassword, isoPlusMs, nowIso, randomToken, sha1, verifyPassword } from './util.js';
 
 export type UserRow = {
   id: number;
@@ -89,6 +89,41 @@ export function logout(token: string): void {
 
 export function touchUser(userId: number): void {
   db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(nowIso(), userId);
+}
+
+/* ------------------------------ password reset ----------------------------- */
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/** Creates a single-use reset token and returns the raw value to email out. */
+export function createPasswordReset(userId: number): string {
+  const token = randomToken(32);
+  db.prepare(
+    'INSERT INTO password_resets (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
+  ).run(sha1(token), userId, isoPlusMs(RESET_TOKEN_TTL_MS), nowIso());
+  return token;
+}
+
+/** Consumes a reset token and sets the new password. Returns false when invalid/expired. */
+export function resetPasswordWithToken(token: string, password: string): boolean {
+  const hash = sha1(token);
+  const row = db
+    .prepare('SELECT user_id, expires_at FROM password_resets WHERE token_hash = ?')
+    .get(hash) as { user_id: number; expires_at: string } | undefined;
+  if (!row) return false;
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    db.prepare('DELETE FROM password_resets WHERE token_hash = ?').run(hash);
+    return false;
+  }
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), row.user_id);
+  db.prepare('DELETE FROM password_resets WHERE token_hash = ?').run(hash);
+  // Invalidate every session so anyone holding the old password is signed out.
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  return true;
+}
+
+export function deleteUser(userId: number): void {
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 }
 
 export function bearer(req: IncomingMessage): string {
