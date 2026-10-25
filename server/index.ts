@@ -643,7 +643,34 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (method === 'GET' && path === '/api/admin/signals') {
     if (!requireAdmin(req, res)) return;
     const page = Number(url.searchParams.get('page') ?? '1') || 1;
-    const data = listSignals({ status: 'all', page, pageSize: 25, isPro: true });
+    const statusParam = (url.searchParams.get('status') ?? '').toUpperCase();
+    const statusExact: 'OPEN' | 'CLOSED' | 'DRAFT' | null =
+      statusParam === 'OPEN' || statusParam === 'CLOSED' || statusParam === 'DRAFT' ? statusParam : null;
+    const action = (url.searchParams.get('action') ?? '').toUpperCase() || null;
+
+    let timeFrom: string | null = null;
+    let timeTo: string | null = null;
+    const from = url.searchParams.get('from');
+    const to = url.searchParams.get('to');
+    if (from) {
+      const d = new Date(from + 'T00:00:00.000Z');
+      if (!Number.isNaN(d.getTime())) timeFrom = d.toISOString();
+    }
+    if (to) {
+      const d = new Date(to + 'T23:59:59.999Z');
+      if (!Number.isNaN(d.getTime())) timeTo = d.toISOString();
+    }
+
+    const data = listSignals({
+      status: 'all',
+      statusExact,
+      action,
+      timeFrom,
+      timeTo,
+      page,
+      pageSize: 25,
+      isPro: true,
+    });
     sendJson(res, 200, data);
     return;
   }
