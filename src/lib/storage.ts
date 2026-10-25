@@ -5,6 +5,7 @@ export const KEYS = {
   timezone: 'sd.timezone',
   onboarded: 'sd.onboarded',
   prefs: 'sd.prefs',
+  dismissedAnnouncement: 'sd.dismissedAnnouncement',
   admin: 'sd.adminToken',
 } as const;
 

@@ -152,6 +152,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       websiteUrl: s.website_url,
       instagramUrl: s.instagram_url,
       supportEmail: s.support_email,
+      privacyPolicyUrl: s.privacy_policy_url,
+      announcementEnabled: s.announcement_enabled === '1',
+      announcementText: s.announcement_text,
       memberVisibleCount: Number(s.member_visible_count),
       historyDays: Number(s.history_days),
       stats: performanceStats(),
@@ -983,6 +986,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       'website_url',
       'instagram_url',
       'support_email',
+      'privacy_policy_url',
+      'announcement_enabled',
+      'announcement_text',
     ];
     for (const key of allowed) {
       if (body[key] !== undefined) setSetting(key, String(body[key]).slice(0, 300));

@@ -151,6 +151,9 @@ export const DEFAULT_SETTINGS: Record<string, string> = {
   website_url: 'https://signaldesk.example.com',
   instagram_url: 'https://instagram.com/signaldesk',
   support_email: 'support@signaldesk.example.com',
+  privacy_policy_url: 'https://signaldesk.example.com/privacy',
+  announcement_enabled: '0',
+  announcement_text: '',
 };
 
 export function getSetting(key: string): string {

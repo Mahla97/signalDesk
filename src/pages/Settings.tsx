@@ -121,6 +121,16 @@ export default function Settings(): React.ReactElement {
           </Link>
           .
         </p>
+        <p className="mt-2 text-sm text-slate-400">
+          <a
+            href={config.privacyPolicyUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="font-bold text-sky-300 hover:text-sky-200"
+          >
+            Privacy Policy
+          </a>
+        </p>
         <p className="mt-2 text-xs text-slate-600">SignalDesk v1.0 — signals are guidance only.</p>
       </Panel>
     </div>

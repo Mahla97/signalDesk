@@ -1575,11 +1575,33 @@ function SettingsTab(): React.ReactElement {
     { key: 'website_url', label: 'Website link' },
     { key: 'instagram_url', label: 'Instagram link' },
     { key: 'support_email', label: 'Support email' },
+    { key: 'privacy_policy_url', label: 'Privacy policy link' },
   ];
 
   return (
     <Panel className="p-5" testId="admin-settings">
       <form onSubmit={save} className="space-y-3">
+        <div className="rounded-xl border border-[#243049] bg-[#0c1220] p-3">
+          <p className="text-sm font-bold text-slate-200">Announcement</p>
+          <label className="mt-2 flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={settings.announcement_enabled === '1'}
+              onChange={(e) => setSettings({ ...settings, announcement_enabled: e.target.checked ? '1' : '0' })}
+              data-testid="admin-announcement-enabled"
+              className="h-5 w-5 rounded border-slate-600 bg-transparent accent-sky-500"
+            />
+            <span className="text-sm text-slate-300">Show announcement to users</span>
+          </label>
+          <textarea
+            value={settings.announcement_text ?? ''}
+            onChange={(e) => setSettings({ ...settings, announcement_text: e.target.value })}
+            placeholder="Write an announcement…"
+            rows={3}
+            data-testid="admin-announcement-text"
+            className={inputClass + ' mt-2'}
+          />
+        </div>
         {fields.map((f) => (
           <label key={f.key} className="block">
             <span className="mb-1 block text-sm font-bold text-slate-200">{f.label}</span>

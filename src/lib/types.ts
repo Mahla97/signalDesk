@@ -64,6 +64,9 @@ export type AppConfig = {
   websiteUrl: string;
   instagramUrl: string;
   supportEmail: string;
+  privacyPolicyUrl: string;
+  announcementEnabled: boolean;
+  announcementText: string;
   memberVisibleCount: number;
   historyDays: number;
   stats: { total: number; wins: number; losses: number; winRate: number };

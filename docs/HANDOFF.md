@@ -280,14 +280,17 @@ The feed does **not** wait for a manual reload:
 - Notifications collapsed to a single master switch (removed trading/BUY/SELL sub-preferences).
 - Account deletion: `DELETE /api/auth/me` + a confirmation flow in Profile.
 - Password reset: `forgot-password` / `reset-password` endpoints + email link (SMTP) + a `/reset-password` screen.
+- Privacy policy: added `docs/PRIVACY_POLICY.md` + a Settings → Privacy Policy link (configurable `privacy_policy_url`).
+- Announcement banner: admin can write/toggle an announcement (Admin → Settings); it shows at the top of the feed and each user can dismiss it locally.
 
 ## 14. Before Google Play release — checklist
 
 Code fixes are done; these items need console/account access and are not yet done:
 
-- **Privacy policy URL + Data Safety form.** Publish a privacy policy and link it
-  in the Play Console; fill out the Data Safety form (what data is collected, how
-  it is used, how it is deleted).
+- **Privacy policy — host it + Data Safety form.** The policy text is written
+  (`docs/PRIVACY_POLICY.md`) and the app links to it (Settings → Privacy Policy).
+  Remaining: host the policy at a public URL, set that URL in the Play Console
+  store listing, and fill out the Data Safety form.
 - **Account-deletion web path.** In-app deletion is implemented; Play also wants a
   web URL where users can request deletion outside the app. Add that link in the
   console.

@@ -1,9 +1,43 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, Crown, Radio, ShieldCheck } from 'lucide-react';
+import { Bell, Crown, Megaphone, Radio, ShieldCheck, X } from 'lucide-react';
 import SignalCard from '../components/SignalCard';
 import { Badge, Button, EmptyState, ErrorState, Panel, SectionTitle, SignalSkeletonList } from '../components/ui';
 import { useSignals } from '../lib/useSignals';
 import { useStore } from '../lib/store';
+import { KEYS, read, write } from '../lib/storage';
+
+function AnnouncementBanner(): React.ReactElement | null {
+  const { config } = useStore();
+  const [dismissedText, setDismissedText] = useState<string | null>(() => read(KEYS.dismissedAnnouncement));
+
+  if (!config.announcementEnabled || !config.announcementText) return null;
+  if (dismissedText === config.announcementText) return null;
+
+  function dismiss(): void {
+    write(KEYS.dismissedAnnouncement, config.announcementText);
+    setDismissedText(config.announcementText);
+  }
+
+  return (
+    <div
+      className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"
+      data-testid="announcement-banner"
+    >
+      <Megaphone className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden="true" />
+      <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-amber-100/90">{config.announcementText}</p>
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label="Dismiss announcement"
+        data-testid="announcement-dismiss"
+        className="rounded-lg p-1 text-amber-300/70 transition hover:bg-white/5 hover:text-amber-200"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 export default function Feed(): React.ReactElement {
   const { timezone, isPartner, config, prefs, signalTick } = useStore();
@@ -13,6 +47,8 @@ export default function Feed(): React.ReactElement {
 
   return (
     <div className="space-y-5">
+      <AnnouncementBanner />
+
       <Panel className="p-4" testId="status-panel">
         <div className="flex flex-wrap items-center gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-300 sd-live-dot">

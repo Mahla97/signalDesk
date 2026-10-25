@@ -61,6 +61,21 @@ Keep it running with `pm2` (or a systemd unit) and put HTTPS in front with Caddy
 - TradingView webhook URL: `https://your-backend.com/api/webhooks/tradingview`
 - Sign in to `/admin`, delete the sample signals, and set the contact links.
 
+## Google Play store requirements (no full website needed)
+
+You don't need a website to publish, but you do need **two public URLs**:
+
+| Requirement | Notes |
+| --- | --- |
+| Privacy policy URL | Required for all apps. The text is in `docs/PRIVACY_POLICY.md`. |
+| Account-deletion URL | Required because the app has email accounts — a page where users can request deletion outside the app. |
+
+Both can be simple free single pages (GitHub Pages, a public Notion page, etc.) — no domain
+or real website required. Paste the URLs into Play Console → App content.
+
+The in-app side is already handled: Settings → Privacy Policy link, and the in-app
+"Delete account" flow.
+
 ## Gotchas
 
 - Never put the SQLite DB on ephemeral storage — it is wiped on every deploy.
