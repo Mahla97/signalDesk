@@ -4,12 +4,10 @@
  * Run the backend first:   npm run server
  * Then in a second shell:  npm run test:api
  *
- * Override the target with TEST_BASE_URL and the secret with
- * TRADINGVIEW_WEBHOOK_SECRET (must match the running server).
+ * Override the target with TEST_BASE_URL.
  */
 
 const BASE = process.env.TEST_BASE_URL ?? 'http://localhost:3001';
-const SECRET = process.env.TRADINGVIEW_WEBHOOK_SECRET ?? 'change-me-tradingview-secret';
 
 let passed = 0;
 let failed = 0;
@@ -82,12 +80,9 @@ async function main(): Promise<void> {
   });
   const earlyAdminHeaders = { 'x-admin-token': String(earlyAdmin.json.token ?? '') };
 
-  /* -------------------------------- webhook -------------------------------- */
-  console.log('\ntradingview webhook');
-  const externalId = 'test-signal-' + stamp;
+  /* --------------------------- admin signal creation ------------------------ */
+  console.log('\nadmin creates signals');
   const payload = {
-    secret: SECRET,
-    id: externalId,
     strategy: 'Test Strategy',
     symbol: 'BTCUSDT',
     action: 'BUY',
@@ -98,53 +93,48 @@ async function main(): Promise<void> {
     time: new Date().toISOString(),
   };
 
-  const valid = await post('/api/webhooks/tradingview', payload);
-  check('accepts a valid webhook', valid.status === 202 && valid.json.duplicate === false, valid.json);
-  const signalId = Number(valid.json.signalId);
+  const valid = await post('/api/admin/signals', payload, earlyAdminHeaders);
+  check('accepts a valid signal', valid.status === 201 && typeof valid.json.signal?.id === 'number', valid.json);
+  const signalId = Number(valid.json.signal?.id);
 
-  const dupe = await post('/api/webhooks/tradingview', payload);
-  check('is idempotent for a replayed alert', dupe.status === 200 && dupe.json.duplicate === true, dupe.json);
-  check('dedupe returns the same signal id', Number(dupe.json.signalId) === signalId, dupe.json);
-
-  const badSecret = await post('/api/webhooks/tradingview', { ...payload, secret: 'wrong-secret', id: externalId + '-x' });
-  check('rejects an invalid secret', badSecret.status === 401, badSecret.json);
-
-  const badPayload = await post('/api/webhooks/tradingview', { secret: SECRET, symbol: 'BTCUSDT' });
+  const badPayload = await post('/api/admin/signals', { symbol: 'BTCUSDT' }, earlyAdminHeaders);
   check('rejects a payload with no action', badPayload.status === 422, badPayload.json);
 
-  const badAction = await post('/api/webhooks/tradingview', { secret: SECRET, symbol: 'BTCUSDT', action: 'HODL' });
+  const badAction = await post('/api/admin/signals', { symbol: 'BTCUSDT', action: 'HODL' }, earlyAdminHeaders);
   check('rejects an unsupported action', badAction.status === 422, badAction.json);
 
   /* ---------------------------- multiple take profits ----------------------- */
   console.log('\nmultiple take profits');
-  const multiId = 'test-multi-' + stamp;
-  const multi = await post('/api/webhooks/tradingview', {
-    secret: SECRET,
-    id: multiId,
-    strategy: 'Test Strategy',
-    symbol: 'ETHUSDT',
-    action: 'BUY',
-    price: 3000,
-    stopLoss: 2900,
-    takeProfits: [3100, 3250, 3400],
-    timeframe: '1h',
-    time: new Date().toISOString(),
-  });
-  check('accepts a webhook carrying several take profits', multi.status === 202, multi.json);
-  const multiSignalId = Number(multi.json.signalId);
+  const multi = await post(
+    '/api/admin/signals',
+    {
+      strategy: 'Test Strategy',
+      symbol: 'ETHUSDT',
+      action: 'BUY',
+      price: 3000,
+      stopLoss: 2900,
+      takeProfits: [3100, 3250, 3400],
+      timeframe: '1h',
+      time: new Date().toISOString(),
+    },
+    earlyAdminHeaders,
+  );
+  check('accepts a signal carrying several take profits', multi.status === 201, multi.json);
+  const multiSignalId = Number(multi.json.signal?.id);
 
-  const numberedId = 'test-numbered-' + stamp;
-  const numbered = await post('/api/webhooks/tradingview', {
-    secret: SECRET,
-    id: numberedId,
-    symbol: 'SOLUSDT',
-    action: 'SELL',
-    price: 150,
-    tp1: 145,
-    tp2: 140,
-    time: new Date().toISOString(),
-  });
-  const numberedSignalId = Number(numbered.json.signalId);
+  const numbered = await post(
+    '/api/admin/signals',
+    {
+      symbol: 'SOLUSDT',
+      action: 'SELL',
+      price: 150,
+      tp1: 145,
+      tp2: 140,
+      time: new Date().toISOString(),
+    },
+    earlyAdminHeaders,
+  );
+  const numberedSignalId = Number(numbered.json.signal?.id);
 
   // Storage assertions read through the admin list (unredacted) — a Member
   // sees today's newest signals as locked.

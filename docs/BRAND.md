@@ -15,7 +15,7 @@ It is **guidance only** — SignalDesk never executes trades and is not a broker
 ## How it works (for context)
 
 ```
-TradingView alert  →  backend  →  push notification  →  the app
+Signal published  →  backend  →  push notification  →  the app
 ```
 
 Users open the app and see a live feed of open signals, each with entry, stop-loss and

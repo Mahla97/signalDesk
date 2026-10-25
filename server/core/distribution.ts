@@ -126,7 +126,7 @@ export function buildNotificationForDevice(
  * Fan a saved signal out into per-device delivery jobs.
  * Called AFTER the signal is persisted and AFTER the request responded.
  * UNIQUE(signal_id, device_id, revision) makes it idempotent per revision, so a
- * replayed webhook or a repeated save never produces a second push.
+ * repeated save never produces a second push.
  *
  * kind = 'NEW'    → every eligible device.
  * kind = 'UPDATE' → only devices that already received this signal.
@@ -267,7 +267,7 @@ async function getAccessToken(sa: ServiceAccount): Promise<string> {
  * the job is parked as SENT and the device picks it up from
  * /api/notifications/pending the moment it is running.
  * Adding Telegram (or any other channel) later means adding a function here —
- * the webhook and the signal service do not change.
+ * the signal service does not change.
  */
 export async function transportSend(
   device: DeviceRow,

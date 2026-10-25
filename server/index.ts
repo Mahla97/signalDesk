@@ -31,7 +31,7 @@ import {
   deleteSampleSignals,
   deleteSignal,
   getSignalById,
-  ingestWebhookPayload,
+  ingestSignalPayload,
   listSignalChanges,
   listSignals,
   performanceStats,
@@ -58,7 +58,6 @@ import {
   randomToken,
   rateLimit,
   readJson,
-  safeEqual,
   sendJson,
   toNumber,
   toStr,
@@ -84,13 +83,6 @@ setInterval(() => {
   }
 }, 60_000);
 
-const WEBHOOK_SECRET = process.env.TRADINGVIEW_WEBHOOK_SECRET || 'change-me-tradingview-secret';
-
-if (process.env.NODE_ENV === 'production' && WEBHOOK_SECRET === 'change-me-tradingview-secret') {
-  console.error('[server] Refusing to start: set TRADINGVIEW_WEBHOOK_SECRET in production.');
-  process.exit(1);
-}
-
 /* ------------------------------- helpers --------------------------------- */
 
 function getDevice(req: IncomingMessage): DeviceRow | null {
@@ -114,12 +106,6 @@ function requireAdmin(req: IncomingMessage, res: ServerResponse): boolean {
   return true;
 }
 
-function logWebhook(externalId: string | null, outcome: string, message: string): void {
-  db.prepare(
-    'INSERT INTO webhook_events (external_signal_id, outcome, message, created_at) VALUES (?, ?, ?, ?)',
-  ).run(externalId, outcome, message, nowIso());
-}
-
 /* -------------------------------- routes ---------------------------------- */
 
 async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> {
@@ -132,7 +118,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-device-token,x-admin-token,x-webhook-secret',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-device-token,x-admin-token',
     });
     res.end();
     return;
@@ -158,61 +144,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       memberVisibleCount: Number(s.member_visible_count),
       historyDays: Number(s.history_days),
       stats: performanceStats(),
-    });
-    return;
-  }
-
-  /* ---------------------------- TradingView -------------------------------- */
-
-  if (method === 'POST' && path === '/api/webhooks/tradingview') {
-    const ip = clientIp(req);
-    if (!rateLimit('webhook:' + ip, 60, 60_000)) {
-      logWebhook(null, 'RATE_LIMITED', 'too many requests from ' + ip);
-      sendJson(res, 429, { error: 'rate limited' });
-      return;
-    }
-
-    let payload: Record<string, unknown>;
-    try {
-      payload = await readJson(req);
-    } catch {
-      logWebhook(null, 'INVALID_PAYLOAD', 'body was not valid JSON');
-      sendJson(res, 400, { error: 'invalid json body' });
-      return;
-    }
-
-    const provided = header(req, 'x-webhook-secret') || String(payload.secret ?? '');
-    if (!safeEqual(provided, WEBHOOK_SECRET)) {
-      // never log the secret itself
-      logWebhook(null, 'INVALID_SECRET', 'rejected request from ' + ip);
-      sendJson(res, 401, { error: 'invalid secret' });
-      return;
-    }
-    delete payload.secret;
-
-    const result = ingestWebhookPayload(payload);
-    if (!result.ok) {
-      logWebhook(null, 'INVALID_PAYLOAD', result.error);
-      sendJson(res, 422, { error: result.error });
-      return;
-    }
-
-    if (!result.created) {
-      logWebhook(result.signal.external_signal_id, 'DUPLICATE', 'idempotent replay ignored');
-      sendJson(res, 200, { ok: true, duplicate: true, signalId: result.signal.id });
-      return;
-    }
-
-    logWebhook(result.signal.external_signal_id, 'ACCEPTED', `${result.signal.action} ${result.signal.symbol}`);
-    // Respond immediately; distribution happens outside the request.
-    sendJson(res, 202, { ok: true, duplicate: false, signalId: result.signal.id });
-
-    setImmediate(() => {
-      try {
-        enqueueSignalDistribution(result.signal.id);
-      } catch (err) {
-        console.error('[webhook] distribution failed for signal', result.signal.id, err);
-      }
     });
     return;
   }
@@ -646,7 +577,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       pushFailed: failed.c,
       editedSignals: edited.c,
       performance: performanceStats(),
-      webhookSecretConfigured: Boolean(process.env.TRADINGVIEW_WEBHOOK_SECRET),
     });
     return;
   }
@@ -785,7 +715,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     const isDraft = Boolean(body.draft);
     const payload = { ...body, id: toStr(body.id, 120) ?? 'manual-' + randomToken(8) };
-    const result = ingestWebhookPayload(payload);
+    const result = ingestSignalPayload(payload);
     if (!result.ok) {
       sendJson(res, 422, { error: result.error });
       return;
@@ -955,10 +885,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
          ORDER BY j.id DESC LIMIT 100`,
       )
       .all();
-    const hooks = db
-      .prepare('SELECT * FROM webhook_events ORDER BY id DESC LIMIT 50')
-      .all();
-    sendJson(res, 200, { deliveries: jobs, webhookEvents: hooks });
+    sendJson(res, 200, { deliveries: jobs });
     return;
   }
 
@@ -1013,6 +940,5 @@ const server = createServer((req, res) => {
 const port = Number(process.env.PORT ?? 3001);
 server.listen(port, () => {
   console.log(`[server] SignalDesk API listening on ${port}`);
-  console.log(`[server] webhook secret ${process.env.TRADINGVIEW_WEBHOOK_SECRET ? 'loaded from env' : 'using built-in default — set TRADINGVIEW_WEBHOOK_SECRET'}`);
   console.log(`[server] admin user: ${getSetting('admin_username')}`);
 });

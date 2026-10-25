@@ -24,7 +24,6 @@ want the web app at a URL, serve `dist/` separately and proxy `/api` to the back
 | Variable | Required | Notes |
 | --- | --- | --- |
 | `PORT` | no | Default `3001`. |
-| `TRADINGVIEW_WEBHOOK_SECRET` | **yes in production** | Server refuses to boot on the default. |
 | `ADMIN_PASSWORD` | **yes in production** | Server refuses to boot on the default. |
 | `APP_URL` | yes | Public origin used to build password-reset links. |
 | `SMTP_HOST` · `SMTP_PORT` · `SMTP_SECURE` · `SMTP_USER` · `SMTP_PASS` · `SMTP_FROM` | yes (for reset email) | `SMTP_FROM` must be a domain verified in your email provider. |
@@ -58,7 +57,6 @@ Keep it running with `pm2` (or a systemd unit) and put HTTPS in front with Caddy
   VITE_API_BASE_URL=https://your-backend.com npm run build
   npx cap sync android
   ```
-- TradingView webhook URL: `https://your-backend.com/api/webhooks/tradingview`
 - Sign in to `/admin`, delete the sample signals, and set the contact links.
 
 ## Google Play store requirements (no full website needed)
@@ -80,4 +78,4 @@ The in-app side is already handled: Settings → Privacy Policy link, and the in
 
 - Never put the SQLite DB on ephemeral storage — it is wiped on every deploy.
 - `SMTP_FROM` must be a verified domain, or the password-reset email is rejected.
-- Set `TRADINGVIEW_WEBHOOK_SECRET` and `ADMIN_PASSWORD`, or the server won't boot in production.
+- Set `ADMIN_PASSWORD`, or the server won't boot in production.

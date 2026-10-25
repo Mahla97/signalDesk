@@ -105,11 +105,3 @@ export type DeliveryLog = {
   symbol: string | null;
   action: string | null;
 };
-
-export type WebhookEvent = {
-  id: number;
-  external_signal_id: string | null;
-  outcome: string;
-  message: string | null;
-  created_at: string;
-};

@@ -13,8 +13,8 @@ trust this file first.
 A mobile-first crypto + forex trading-signal app with this pipeline:
 
 ```
-TradingView alert  →  webhook  →  SQLite  →  per-device delivery queue  →  FCM push
-                                                                         ↘  (web) device polls the queue
+admin publishes a signal  →  SQLite  →  per-device delivery queue  →  FCM push
+                                                                    ↘  (web) device polls the queue
 ```
 
 - End users see a live feed, a position-size calculator, and closed-signal history.
@@ -83,7 +83,7 @@ Cleartext `http://` is allowed in debug only (`capacitor.config.ts` +
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the built app |
 | `npm run server` | Start the API (`server/index.ts` via tsx) |
-| `npm run test:api` | Full API suite (64 checks) against a live server |
+| `npm run test:api` | Full API suite (61 checks) against a live server |
 | `npm run test:admin` | Admin add/edit/delete lifecycle suite (14 checks) |
 
 Tests run against a **live server** and write real rows — use a disposable DB.
@@ -92,13 +92,11 @@ Tests run against a **live server** and write real rows — use a disposable DB.
 
 All backend-side. Every one has a safe default; none are required to boot in
 development. In **production** (`NODE_ENV=production`) the server refuses to
-start on the guessable defaults, so `TRADINGVIEW_WEBHOOK_SECRET` and
-`ADMIN_PASSWORD` become mandatory.
+start on the guessable default, so `ADMIN_PASSWORD` becomes mandatory.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `NODE_ENV` | — | Set to `production` for a release deploy; enables the guards below. |
-| `TRADINGVIEW_WEBHOOK_SECRET` | `change-me-tradingview-secret` | Secret TradingView sends; constant-time compared. **Must be set in production.** |
 | `ADMIN_USERNAME` | `admin` | Only read on first boot. |
 | `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Only read on first boot, stored hashed. **Must be set in production.** |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON → enables FCM push. |
@@ -176,7 +174,7 @@ docs/                docs (this file, ARCHITECTURE, firebase keys)
 3. `delivery_jobs` rebuilds when its shape/unique-key changes.
 
 Tables: `users`, `sessions`, `admin_tokens`, `devices`, `signals`,
-`signal_edits`, `delivery_jobs`, `webhook_events`, `settings`.
+`signal_edits`, `delivery_jobs`, `settings`.
 
 Key facts:
 
@@ -195,7 +193,7 @@ A delivery job has a `kind`:
 
 | kind | When | Audience |
 | --- | --- | --- |
-| `NEW` | signal created (webhook or admin) | every eligible device |
+| `NEW` | signal created (admin) | every eligible device |
 | `UPDATE` | signal edited | devices that already received it (SENT/DELIVERED) |
 | `DELETE` | signal deleted | devices that already received it |
 
@@ -204,7 +202,7 @@ distributed and hidden from users until published
 (`POST /api/admin/signals/:id/publish`). The admin UI has Publish / Save-as-draft
 buttons, a Publish action on draft rows, and confirmation dialogs on delete.
 
-Flow: webhook/admin persists the signal **first**, responds, then
+Flow: the admin route persists the signal **first**, responds, then
 `setImmediate → enqueueSignalDistribution()` creates one `delivery_jobs` row per
 eligible device. A background worker (every 3s) sends each via
 `transportSend()` — FCM when configured, otherwise marks `SENT` for the device
@@ -255,6 +253,9 @@ The feed does **not** wait for a manual reload:
 
 ## 13. Recent changes (this session)
 
+- Removed the TradingView webhook (`POST /api/webhooks/tradingview`), its secret,
+  the `webhook_events` table, and all related docs. Signals are now created only
+  via the admin panel.
 - FCM service account wired on the dev server (`GOOGLE_APPLICATION_CREDENTIALS`).
 - Soft delete (`signals.deleted_at`) instead of hard delete.
 - `DELETE` delivery kind so deleting a signal notifies devices instantly.
@@ -273,7 +274,7 @@ The feed does **not** wait for a manual reload:
 - `android:allowBackup="false"` (auth/device tokens must not auto-restore).
 - Removed Capacitor template tests (wrong `com.getcapacitor.myapp` package).
 - `allowMixedContent` is now opt-in via `CAPACITOR_ALLOW_MIXED_CONTENT=true` (off in release).
-- Production guards: server refuses to boot on default webhook secret / admin password.
+- Production guards: server refuses to boot on the default admin password.
 - Renamed the two tiers Free → Member and Pro → Partner; removed all payment/upgrade language from the UI.
 - Admin: delete a user from the Users tab (`DELETE /api/admin/users/:id`).
 - Forgot-password returns a `devResetUrl` in non-production so the reset flow is testable without SMTP.

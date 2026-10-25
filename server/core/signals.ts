@@ -68,7 +68,7 @@ export type PublicSignal = {
 export const ALLOWED_ACTIONS = ['BUY', 'SELL', 'CLOSE'] as const;
 const MAX_TAKE_PROFITS = 8;
 
-export type WebhookResult =
+export type IngestResult =
   | { ok: true; created: boolean; signal: SignalRow }
   | { ok: false; error: string };
 
@@ -122,7 +122,7 @@ export function parseTakeProfits(row: SignalRow): number[] {
 
 /* --------------------------------- ingest --------------------------------- */
 
-/** Deterministic id so a repeated TradingView alert can never create a second row. */
+/** Deterministic id so a repeated submission can never create a second row. */
 export function deterministicId(payload: Record<string, unknown>): string {
   const explicit = toStr(payload.id ?? payload.signalId ?? payload.externalSignalId, 120);
   if (explicit) return explicit;
@@ -170,10 +170,10 @@ export function getSignalByExternalId(externalId: string): SignalRow | undefined
 }
 
 /**
- * Validate + persist a TradingView payload. Idempotent by external_signal_id.
+ * Validate + persist a signal payload. Idempotent by external_signal_id.
  * Never sends anything itself — distribution is enqueued by the caller.
  */
-export function ingestWebhookPayload(payload: Record<string, unknown>): WebhookResult {
+export function ingestSignalPayload(payload: Record<string, unknown>): IngestResult {
   const symbol = toStr(payload.symbol ?? payload.ticker, 40);
   const actionRaw = toStr(payload.action ?? payload.side, 12);
   if (!symbol) return { ok: false, error: 'symbol is required' };
@@ -353,7 +353,7 @@ function safeJson(raw: string): unknown {
 /**
  * Applies an admin edit to an already published signal, writing one change-log
  * row per modified field and bumping the revision. Distribution of the
- * "signal updated" notice is the caller's job — same split as the webhook.
+ * "signal updated" notice is the caller's job — same split as signal creation.
  */
 export function updateSignal(id: number, patch: SignalPatch): UpdateResult {
   const row = getSignalById(id);

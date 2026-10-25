@@ -128,16 +128,6 @@ CREATE INDEX IF NOT EXISTS idx_signal_edits_signal ON signal_edits(signal_id, re
 ` +
   DELIVERY_JOBS_SQL +
   `
-CREATE TABLE IF NOT EXISTS webhook_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  external_signal_id TEXT,
-  outcome TEXT NOT NULL,
-  message TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events(created_at DESC);
-
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
