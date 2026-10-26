@@ -68,7 +68,7 @@ export type PublicSignal = {
 export const ALLOWED_ACTIONS = ['BUY', 'SELL', 'CLOSE'] as const;
 const MAX_TAKE_PROFITS = 8;
 
-export type WebhookResult =
+export type IngestResult =
   | { ok: true; created: boolean; signal: SignalRow }
   | { ok: false; error: string };
 
@@ -122,7 +122,7 @@ export function parseTakeProfits(row: SignalRow): number[] {
 
 /* --------------------------------- ingest --------------------------------- */
 
-/** Deterministic id so a repeated TradingView alert can never create a second row. */
+/** Deterministic id so a repeated submission can never create a second row. */
 export function deterministicId(payload: Record<string, unknown>): string {
   const explicit = toStr(payload.id ?? payload.signalId ?? payload.externalSignalId, 120);
   if (explicit) return explicit;
@@ -170,10 +170,10 @@ export function getSignalByExternalId(externalId: string): SignalRow | undefined
 }
 
 /**
- * Validate + persist a TradingView payload. Idempotent by external_signal_id.
+ * Validate + persist a signal payload. Idempotent by external_signal_id.
  * Never sends anything itself — distribution is enqueued by the caller.
  */
-export function ingestWebhookPayload(payload: Record<string, unknown>): WebhookResult {
+export function ingestSignalPayload(payload: Record<string, unknown>): IngestResult {
   const symbol = toStr(payload.symbol ?? payload.ticker, 40);
   const actionRaw = toStr(payload.action ?? payload.side, 12);
   if (!symbol) return { ok: false, error: 'symbol is required' };
@@ -353,7 +353,7 @@ function safeJson(raw: string): unknown {
 /**
  * Applies an admin edit to an already published signal, writing one change-log
  * row per modified field and bumping the revision. Distribution of the
- * "signal updated" notice is the caller's job — same split as the webhook.
+ * "signal updated" notice is the caller's job — same split as signal creation.
  */
 export function updateSignal(id: number, patch: SignalPatch): UpdateResult {
   const row = getSignalById(id);
@@ -577,9 +577,9 @@ function redact(row: SignalRow, locked: boolean): PublicSignal {
   };
 }
 
-/** Ids a free viewer may read in full: the first N open signals of the current day. */
+/** Ids a Member who may read in full: the first N open signals of the current day. */
 export function unlockedOpenIds(): Set<number> {
-  const limit = getSettingNumber('free_visible_count', 3);
+  const limit = getSettingNumber('member_visible_count', 3);
   const rows = db
     .prepare(
       `SELECT id FROM signals
@@ -591,12 +591,12 @@ export function unlockedOpenIds(): Set<number> {
 }
 
 /**
- * Whether a single signal falls inside the free "first N of today" window.
+ * Whether a single signal falls inside the Member "first N of today" window.
  * Unlike unlockedOpenIds() it ignores the signal's own deleted/status state, so
  * it also answers correctly for a soft-deleted signal (DELETE notification).
  */
-export function isSignalInFreeWindow(signal: SignalRow): boolean {
-  const limit = getSettingNumber('free_visible_count', 3);
+export function isSignalInMemberWindow(signal: SignalRow): boolean {
+  const limit = getSettingNumber('member_visible_count', 3);
   const since = startOfUtcDayIso();
   const ts = signal.signal_timestamp;
   if (!ts || ts < since) return false;
@@ -610,8 +610,8 @@ export function isSignalInFreeWindow(signal: SignalRow): boolean {
   return earlier.c < limit;
 }
 
-export function isLockedFor(row: SignalRow, isPro: boolean, unlocked?: Set<number>): boolean {
-  if (isPro) return false;
+export function isLockedFor(row: SignalRow, isPartner: boolean, unlocked?: Set<number>): boolean {
+  if (isPartner) return false;
   if (row.status === 'CLOSED') return false; // history is open to everyone
   const set = unlocked ?? unlockedOpenIds();
   return !set.has(row.id);
@@ -626,7 +626,7 @@ export type ListOptions = {
   timeTo?: string | null;
   page: number;
   pageSize: number;
-  isPro: boolean;
+  isPartner: boolean;
 };
 
 export function listSignals(opts: ListOptions): {
@@ -685,7 +685,7 @@ export function listSignals(opts: ListOptions): {
     .all(...params, pageSize, (page - 1) * pageSize) as SignalRow[];
 
   const unlocked = unlockedOpenIds();
-  const items = rows.map((row) => redact(row, isLockedFor(row, opts.isPro, unlocked)));
+  const items = rows.map((row) => redact(row, isLockedFor(row, opts.isPartner, unlocked)));
   return {
     items,
     page,
@@ -695,8 +695,8 @@ export function listSignals(opts: ListOptions): {
   };
 }
 
-export function publicSignal(row: SignalRow, isPro: boolean): PublicSignal {
-  return redact(row, isLockedFor(row, isPro));
+export function publicSignal(row: SignalRow, isPartner: boolean): PublicSignal {
+  return redact(row, isLockedFor(row, isPartner));
 }
 
 export function rawPublicSignal(row: SignalRow): PublicSignal {

@@ -1,7 +1,7 @@
 # SignalDesk — Crypto & Forex Trading Signals
 
-A mobile-first trading-signal app (crypto + forex) with a TradingView → backend → push
-pipeline, a Free/Pro access model, a closed-signal history, a position-size calculator and a
+A mobile-first trading-signal app (crypto + forex) with an admin → backend → push
+pipeline, a Member/Partner access model, a closed-signal history, a position-size calculator and a
 staff management panel.
 
 > **SignalDesk is not a broker.** It never executes trades. Signals are guidance only, not
@@ -20,11 +20,10 @@ staff management panel.
 7. [Key flows](#8-key-flows)
 8. [Roles & permissions](#9-roles--permissions)
 9. [API reference](#10-api-reference)
-10. [TradingView webhook setup](#11-tradingview-webhook-setup)
-11. [Admin panel](#12-admin-panel)
-12. [Testing](#13-testing)
-13. [Production deployment](#14-production-deployment)
-14. [Troubleshooting](#15-troubleshooting)
+10. [Admin panel](#11-admin-panel)
+11. [Testing](#12-testing)
+12. [Production deployment](#13-production-deployment)
+13. [Troubleshooting](#14-troubleshooting)
 
 ---
 
@@ -35,26 +34,26 @@ staff management panel.
 | Screen | What it does |
 | --- | --- |
 | First run | Risk disclaimer acknowledgement + timezone selection (defaults to the device timezone) |
-| Signals | Live feed, newest first. Free users see the first N open signals of the day in full, the rest blurred/locked |
+| Signals | Live feed, newest first. Members see the first N open signals of the day in full, the rest blurred/locked |
 | Signal details | Entry, stop loss, **all take-profit levels**, timing in the user's timezone, change history |
 | History | Closed signals from the last 14 days, with result and P/L, paginated |
 | Calculator | Position-size / risk calculator for crypto (units) and forex (lots) |
 | Settings | Timezone, notification preferences, full disclaimer |
-| Contact | Telegram / Website / Instagram / e-mail — also the route to becoming Pro |
-| Account | Email + password sign-up/sign-in, Pro status and remaining time |
+| Contact | Telegram / Website / Instagram / e-mail — also the route to becoming a Partner |
+| Account | Email + password sign-up/sign-in, Partner status and remaining time, password reset, delete account |
 
 **Backend**
 
-* TradingView webhook → validation → persistence → async fan-out → push.
-* Idempotent ingestion (a replayed alert never creates a second row or a second push).
+* Admin publish → validation → persistence → async fan-out → push.
+* Idempotent ingestion (a repeated save never creates a second row or a second push).
 * Per-device delivery queue with retries and exponential backoff.
-* Free plan: max 2 push notifications per day (configurable). Pro: everything, in real time.
+* Members see the first N open signals of the day in full; Partners see every signal in real time.
 * **Editable published signals**: every edit is logged, the app shows an “Edited” badge, and
   everyone who already received the signal gets an update notice.
-* Pro subscriptions with an expiry job that returns users to Free automatically.
+* Partner access with an expiry job that returns users to Member automatically.
 
-**Not implemented on purpose:** in-app payments. Upgrading happens by contacting the team;
-staff flip the plan in the admin panel.
+**Not implemented on purpose:** in-app payments. Partner access happens by contacting the team;
+staff flip the tier in the admin panel.
 
 ---
 
@@ -86,7 +85,7 @@ staff flip the plan in the admin panel.
 │   │   └── db.ts              Platform-managed SQLite handle (do not edit)
 │   ├── core/
 │   │   ├── schema.ts          Schema, migrations, settings, sample data
-│   │   ├── auth.ts            Users, sessions, admin tokens, Pro expiry
+│   │   ├── auth.ts            Users, sessions, admin tokens, Partner expiry
 │   │   ├── signals.ts         Ingestion, editing + change log, read/redaction
 │   │   ├── distribution.ts    Eligibility, queue, worker, transport
 │   │   └── util.ts            JSON/HTTP helpers, hashing, rate limiting
@@ -224,17 +223,23 @@ safe default — but the first two must be set before going live.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRADINGVIEW_WEBHOOK_SECRET` | `change-me-tradingview-secret` | Shared secret TradingView must send. Compared in constant time. |
 | `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Admin password, hashed into the database on first boot. |
 | `ADMIN_USERNAME` | `admin` | Admin username, stored on first boot. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON. When set, notifications are pushed through FCM HTTP v1 so they arrive with the app closed. Without it the app pulls its queue while running. |
 | `PORT` | `3001` | Port the API listens on (assigned by the host in production). |
+| `APP_URL` | `http://localhost:5173` | Public origin used to build password-reset links. |
+| `SMTP_HOST` | — | SMTP host for password-reset email. When unset, the reset link is logged instead of emailed. |
+| `SMTP_PORT` | `587` | SMTP port. |
+| `SMTP_SECURE` | `false` | `true` for TLS (port 465). |
+| `SMTP_USER` | — | SMTP username. |
+| `SMTP_PASS` | — | SMTP password. |
+| `SMTP_FROM` | `SMTP_USER` | From address for reset emails. |
 
 Changing `ADMIN_PASSWORD` after the first boot has no effect — the credentials are already
 in the `settings` table. Delete the `admin_password_hash` row (or the database) to re-seed.
 
 Runtime settings that do **not** need a redeploy live in the admin panel’s Settings tab:
-free push per day, unlocked signal count, history window, contact links, support e-mail.
+unlocked signal count, history window, contact links, support e-mail.
 
 ---
 
@@ -259,23 +264,21 @@ and a busy timeout are enabled, and foreign keys are on.
 
 | Table | Purpose |
 | --- | --- |
-| `users` | email, password hash, plan, `pro_start_at`/`pro_end_at`, suspended, timezone |
+| `users` | email, password hash, plan, `partner_start_at`/`partner_end_at`, suspended, timezone |
 | `sessions` | bearer tokens for signed-in users |
 | `admin_tokens` | bearer tokens for the staff panel |
 | `devices` | one row per install: push token, owner, notification preferences |
 | `signals` | the signal itself, including `take_profits` (JSON array), `close_price`, `edited_at`, `edit_count` |
 | `signal_edits` | change log: one row per changed field per revision (old → new) |
 | `delivery_jobs` | per-device delivery queue: `kind`, `revision`, status, attempts, backoff |
-| `webhook_events` | webhook audit trail: accepted / duplicate / invalid / rate limited |
 | `settings` | runtime configuration and admin credentials |
 
 **Take profits.** `take_profits` stores a JSON array (`[67000,69000,71000]`), ordered TP1 → TPn.
 `take_profit` is kept as the first level for backward compatibility; both are written together.
 
 **Close price.** `close_price` is populated **only when a signal closes** — by the panel’s
-Close action, by a TradingView `CLOSE` alert, or by hand in the edit dialog. For open signals
-the admin table shows `—`. Closing also computes `pnl_percent` (direction-aware) and a result
-of `TP`/`SL`/`MANUAL`.
+Close action, or by hand in the edit dialog. For open signals the admin table shows `—`.
+Closing also computes `pnl_percent` (direction-aware) and a result of `TP`/`SL`/`MANUAL`.
 
 ---
 
@@ -284,16 +287,16 @@ of `TP`/`SL`/`MANUAL`.
 ### 8.1 Signal lifecycle
 
 ```
-TradingView alert
-   │  POST /api/webhooks/tradingview   (secret + JSON)
+Admin publishes a signal
+   │  POST /api/admin/signals   (admin token + JSON)
    ▼
-rate limit → validate → deterministic external id → dedupe
+validate → deterministic external id → dedupe
    │
-   ├── duplicate → 200 { duplicate: true }, nothing else happens
+   ├── duplicate → returns the existing signal, nothing else happens
    ▼
 INSERT INTO signals                      (persist BEFORE distributing)
    │
-   ├── respond 202 immediately
+   ├── respond 201 immediately
    ▼
 setImmediate → enqueueSignalDistribution(signalId)
    │   one delivery_job per device, PENDING or SKIPPED + reason
@@ -302,7 +305,7 @@ worker (every 3s) → transportSend → SENT → device pulls / FCM delivers
    ▼
 device acknowledges → DELIVERED
    ▼
-CLOSE alert or admin action → status CLOSED, close_price, result, P/L
+admin Close action → status CLOSED, close_price, result, P/L
    ▼
 appears in History for 14 days
 ```
@@ -323,7 +326,7 @@ INSERT INTO signal_edits (one row per changed field, with old → new)
    ▼
 setImmediate → enqueueSignalDistribution(id, { kind: 'UPDATE', revision })
    │   audience = devices that already received THIS signal (SENT/DELIVERED)
-   │   the free daily limit does not apply — a correction always goes out
+   │   the Member daily limit does not apply — a correction always goes out
    ▼
 notification: "Updated: BUY BTCUSDT" / "Entry price: 65000 → 65500 · …"
    ▼
@@ -343,11 +346,9 @@ is decided by `evaluateEligibility()` and the reason is stored for the logs:
 | --- | --- |
 | Device disabled (invalid token) | `device_disabled` |
 | Notifications turned off | `notifications_off` |
-| Trading signals turned off | `trading_signals_off` |
-| BUY/SELL preference off | `buy_pref_off` / `sell_pref_off` |
 | User suspended | `user_suspended` |
-| Pro active (`plan = PRO`, not suspended, `pro_end_at` in the future) | sent — `pro_active` |
-| Free (no push cap) | sent — `free_quota` |
+| Partner active (`plan = PARTNER`, not suspended, `partner_end_at` in the future) | sent — `partner_active` |
+| Member (no push cap) | sent — `member_quota` |
 | Any edit notice for a signal the device already has | sent — `signal_updated` |
 
 Retries: up to 5 attempts with exponential backoff (5s, 10s, 20s, 40s, 80s). An `NotRegistered`
@@ -384,14 +385,14 @@ than the balance. Spread, commission, funding and slippage are explicitly exclud
 
 | Role | Auth | Can |
 | --- | --- | --- |
-| Guest / Free | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone, receive up to 2 pushes per day |
-| Pro | email + password, plan granted by staff | Everything above with **all** signals unlocked and unlimited real-time pushes while `pro_end_at` is in the future |
+| Guest / Member | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone |
+| Partner | email + password, tier granted by staff | Everything above with **all** signals unlocked and real-time pushes while `partner_end_at` is in the future |
 | Suspended | — | Treated as ineligible for all notifications |
-| Admin | username + password → bearer token | Users and Pro durations, suspend, create/edit/close/delete signals, delivery + webhook logs, runtime settings |
+| Admin | username + password → bearer token | Users and Partner durations, suspend, create/edit/close/delete signals, delivery logs, runtime settings |
 
-Enforcement is server-side. Locked signals are **redacted before serialisation** — a free
+Enforcement is server-side. Locked signals are **redacted before serialisation** — a Member
 client never receives the symbol, action or prices of a locked signal, and
-`GET /api/signals/:id` answers `403 pro_required` for it. Every `/api/admin/*` route calls the
+`GET /api/signals/:id` answers `403 partner_required` for it. Every `/api/admin/*` route calls the
 same `requireAdmin()` guard.
 
 ---
@@ -403,8 +404,8 @@ same `requireAdmin()` guard.
 | Method | Path | Notes |
 | --- | --- | --- |
 | GET | `/api/health` | Liveness probe |
-| GET | `/api/config` | Contact links, free limits, performance stats |
-| GET | `/api/signals?status=open\|closed\|all&market=&page=&pageSize=` | Paginated, newest first, redacted per plan |
+| GET | `/api/config` | Contact links, access limits, performance stats |
+| GET | `/api/signals?status=open\|closed\|all&market=&page=&pageSize=` | Paginated, newest first, redacted per tier |
 | GET | `/api/signals/:id` | Full signal + `changes[]`; `403` when locked |
 | POST | `/api/devices/push-token` | Register/refresh a device and its preferences |
 | DELETE | `/api/devices/push-token/:id` | Unregister (own device only) |
@@ -413,12 +414,9 @@ same `requireAdmin()` guard.
 | POST | `/api/auth/signup` · `/api/auth/login` · `/api/auth/logout` | Email + password |
 | GET | `/api/auth/me` | Current user + device push usage |
 | PATCH | `/api/auth/timezone` | Persist the chosen timezone |
-
-### Webhook
-
-| Method | Path | Notes |
-| --- | --- | --- |
-| POST | `/api/webhooks/tradingview` | Secret in `x-webhook-secret` or `secret` in the body. 60 req/min per IP. `202` accepted, `200` duplicate, `401` bad secret, `422` invalid payload |
+| POST | `/api/auth/forgot-password` | `{ email }` — always `200`; emails a reset link when the account exists |
+| POST | `/api/auth/reset-password` | `{ token, password }` — sets the new password |
+| DELETE | `/api/auth/me` | Delete the signed-in account |
 
 ### Admin (all require `x-admin-token`)
 
@@ -427,16 +425,17 @@ same `requireAdmin()` guard.
 | POST | `/api/admin/login` · `/api/admin/logout` | Returns / revokes a bearer token |
 | GET | `/api/admin/overview` | Counters, performance, edited-signal count |
 | GET | `/api/admin/users?q=` | Search by email |
-| POST | `/api/admin/users/:id/plan` | `{ plan: 'PRO', days: 30 }` or `{ plan: 'FREE' }` |
+| POST | `/api/admin/users/:id/plan` | `{ plan: 'PARTNER', days: 30 }` or `{ plan: 'MEMBER' }` |
 | POST | `/api/admin/users/:id/suspend` | `{ suspended: true\|false }` |
+| DELETE | `/api/admin/users/:id` | Delete a user account |
 | GET | `/api/admin/signals?page=` | All signals, unredacted |
-| POST | `/api/admin/signals` | Publish manually — same pipeline as a webhook |
+| POST | `/api/admin/signals` | Publish a signal manually |
 | **PATCH** | **`/api/admin/signals/:id`** | **Edit a published signal** |
 | GET | `/api/admin/signals/:id/changes` | Full change log |
 | POST | `/api/admin/signals/:id/close` | `{ closePrice, result }` |
 | DELETE | `/api/admin/signals/:id` | Remove a signal |
 | DELETE | `/api/admin/sample-signals` | Remove the shipped demo rows |
-| GET | `/api/admin/logs` | Latest 100 deliveries + 50 webhook events |
+| GET | `/api/admin/logs` | Latest 100 deliveries |
 | GET/POST | `/api/admin/settings` | Runtime settings |
 
 `PATCH /api/admin/signals/:id` accepts any subset of:
@@ -462,52 +461,7 @@ Response: `{ signal, changes[], revision, notified }`.
 
 ---
 
-## 11. TradingView webhook setup
-
-1. Set `TRADINGVIEW_WEBHOOK_SECRET` on the server and restart it.
-2. In TradingView open your alert → **Notifications** → tick **Webhook URL**:
-   `https://YOUR-DOMAIN/api/webhooks/tradingview`
-3. Put this in the alert **Message** box:
-
-```json
-{
-  "secret": "YOUR_WEBHOOK_SECRET",
-  "id": "{{strategy.order.id}}-{{timenow}}",
-  "strategy": "Breakout v2",
-  "symbol": "{{ticker}}",
-  "action": "{{strategy.order.action}}",
-  "price": {{close}},
-  "stopLoss": 63500,
-  "takeProfits": [67000, 69000, 71000],
-  "timeframe": "{{interval}}",
-  "time": "{{timenow}}"
-}
-```
-
-Notes:
-
-* `action` must be `BUY`, `SELL` or `CLOSE` (case-insensitive).
-* Take profits accept three shapes: `takeProfits: [ ... ]`, `tp1` / `tp2` / `tp3` …, or a single
-  `takeProfit`. Duplicates are removed, order is preserved, max 8 levels.
-* `id` should be stable for one logical alert — that is what makes replays idempotent. If you
-  omit it, a deterministic id is derived from strategy + symbol + action + timeframe + time + price.
-* Alternative to `secret` in the body: send the header `x-webhook-secret`.
-* A `CLOSE` alert closes the newest matching open signal for that symbol and records the
-  close price, the result and the P/L.
-
-Verify with curl:
-
-```bash
-curl -X POST https://YOUR-DOMAIN/api/webhooks/tradingview \
-  -H 'Content-Type: application/json' \
-  -d '{"secret":"YOUR_WEBHOOK_SECRET","id":"manual-1","symbol":"BTCUSDT","action":"BUY","price":65000,"takeProfits":[66000,67000]}'
-```
-
-Then check **Admin → Delivery logs → Webhook events**.
-
----
-
-## 12. Admin panel
+## 11. Admin panel
 
 **Locally:** <http://localhost:5173/admin> — sign in as `admin` / `Kx7-Panel-Trade-92` (§5.2).
 **Deployed:** `https://YOUR-DOMAIN/admin`. Either way there is a discreet “Staff access” link in
@@ -516,11 +470,11 @@ the desktop footer (hidden on mobile). Change the credentials via the `ADMIN_USE
 
 | Tab | Contents |
 | --- | --- |
-| Overview | Users, active Pro, devices, signals, push sent/failed, edited signals, win rate, webhook-secret warning |
-| Users | Search, grant Pro for 7/30/90/180/365 days, revert to Free, suspend |
+| Overview | Users, active Partner, devices, signals, push sent/failed, edited signals, win rate |
+| Users | Search, grant Partner for 7/30/90/180/365 days, revert to Member, suspend, delete |
 | Signals | Publish manually (with a **+ Add take profit** repeater), table with Entry, **Take profits**, **Close price**, Status, Edit / Close / Delete, and a “Delete sample data” button |
-| Delivery logs | Latest 100 deliveries (with NEW / UPDATE type and skip reason) and 50 webhook events |
-| Settings | Free push per day, unlocked signal count, history window, Telegram/Website/Instagram/e-mail |
+| Delivery logs | Latest 100 deliveries (with NEW / UPDATE type and skip reason) |
+| Settings | Unlocked signal count, history window, Telegram/Website/Instagram/e-mail |
 
 **Editing a published signal:** Signals → **Edit**. Change any field, add or remove take-profit
 levels (with reorder arrows), optionally untick “Notify everyone who already received this
@@ -528,71 +482,72 @@ signal”, and save. The dialog shows the full change history underneath.
 
 ---
 
-## 13. Testing
+## 12. Testing
 
 Start both processes first (§5.1).
 
 ### 13.1 Manual walkthrough
 
 1. **First run** — accept the risk disclaimer, pick a timezone.
-2. **Signals** — newest first. As a free user the first N open signals of the day are readable; the rest are blurred.
-3. **Locked card** — tapping one says “Pro required” instead of showing details.
+2. **Signals** — newest first. As a Member the first N open signals of the day are readable; the rest are blurred.
+3. **Locked card** — tapping one says “Partner required” instead of showing details.
 4. **History** — closed signals from the last 14 days, with result and P/L.
 5. **Calculator** — balance, risk %, entry, stop → units (crypto) or lots (forex).
 6. **Settings** — change the timezone, toggle notification preferences.
-7. **Account** — sign up, then in Admin → Users grant Pro for 30 days; every signal unlocks.
+7. **Account** — sign up, then in Admin → Users grant Partner for 30 days; every signal unlocks.
 8. **Edit flow** — Admin → Signals → Edit, change a price and save: the card gains an “Edited”
    badge and the detail page a full change history.
 
-### 13.2 Push notification test
+### 12.2 Push notification test
 
-Publish a signal exactly the way TradingView will (§11) and confirm the push arrives.
+Publish a signal from the admin panel (Signals → **Publish a signal manually**) and confirm the
+push arrives. Or use the admin API:
 
 ```bash
 # background or close the app first
-curl -X POST http://localhost:3001/api/webhooks/tradingview \
+curl -X POST http://localhost:3001/api/admin/login \
   -H 'Content-Type: application/json' \
-  -H 'x-webhook-secret: change-me-tradingview-secret' \
-  -d '{"id":"demo-1","symbol":"BTCUSDT","action":"BUY","price":65000,"takeProfits":[66000,67000]}'
+  -d '{"username":"admin","password":"Kx7-Panel-Trade-92"}'
+# … then POST /api/admin/signals with the returned x-admin-token
 ```
 
-Expect `202 {"ok":true,"duplicate":false,...}` and, seconds later, a system notification; tapping
-it opens that signal. **Replay the same `id`** and you get `200 {"duplicate":true}` with **no
-second notification** — that is the idempotency guarantee.
+Expect a `201 { signal: … }` and, seconds later, a system notification; tapping it opens that
+signal.
 
-Free users get a push for every signal, but once they've passed the daily
-`free_visible_count` limit the push is a generic "New signal released" alert with no
-symbol/price. Pro users get the full text. Every skip reason is visible in
+Members get a push for every signal, but once they've passed the daily
+`member_visible_count` limit the push is a generic "New signal released" alert with no
+symbol/price. Partners get the full text. Every skip reason is visible in
 **Admin → Delivery logs**.
 
-### 13.3 Automated API suite
+### 12.3 Automated API suite
 
 ```bash
 npm run server        # terminal 1
 npm run test:api      # terminal 2
 ```
 
-Override the target and secret when testing a deployed instance:
+Override the target when testing a deployed instance:
 
 ```bash
-TEST_BASE_URL=https://YOUR-DOMAIN TRADINGVIEW_WEBHOOK_SECRET=... npm run test:api
+TEST_BASE_URL=https://YOUR-DOMAIN npm run test:api
 ```
 
 Coverage:
 
 * device registration and de-duplication of push tokens
-* valid webhook, invalid secret, missing action, unsupported action
-* idempotency (a replayed alert returns the same signal id and creates nothing)
+* admin signal creation: valid signal, missing action, unsupported action
 * multiple take profits via `takeProfits: []` and via `tp1`/`tp2`
-* free vs pro: locked items in the list, `403` on a locked detail, open history
-* auth: weak password, duplicate email, wrong password, new accounts start on Free
-* admin: unauthenticated rejection, bad credentials, granting/revoking Pro
+* member vs partner: locked items in the list, `403` on a locked detail, open history
+* auth: weak password, duplicate email, wrong password, new accounts start as Member
+* password reset: invalid email rejected, known/unknown email accepted silently, bogus token rejected
+* admin: unauthenticated rejection, bad credentials, granting/revoking Partner
+* delete account: sign up, delete, account gone
 * the notification queue: delivery, `type` + `signalId` payload, acknowledgement
 * editing a published signal: auth required, invalid action rejected, 404 for a missing id,
   take-profit replacement, revision bump, change log, no-op edits, the UPDATE notification
   reaching devices that already had the signal, and close-price recording
 
-**Expected result: `48 passed, 0 failed`.**
+**Expected result: `61 passed, 0 failed`.**
 
 The suite runs against a live server and **writes real rows**, so point it at a disposable
 database — not production. To protect a database you care about, move `server/data/app.db`,
@@ -601,19 +556,17 @@ against the fresh database, then move all three back.
 
 ---
 
-## 14. Production deployment
+## 13. Production deployment
 
 1. **Build the app:** `npm run build` → `dist/`.
-2. **Run the API:** `npm run server` with `PORT`, `TRADINGVIEW_WEBHOOK_SECRET`,
-   `ADMIN_USERNAME`, `ADMIN_PASSWORD` and optionally `GOOGLE_APPLICATION_CREDENTIALS` set.
-3. **Serve both behind one HTTPS origin** so the app can keep calling relative `/api/...`
-   paths. The webhook must be reachable over HTTPS for TradingView.
+2. **Run the API:** `npm run server` with `PORT`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` and
+   optionally `GOOGLE_APPLICATION_CREDENTIALS` set.
+3. **Serve both behind one HTTPS origin** so the app can keep calling relative `/api/...` paths.
 4. **Persist `server/data/`** — it holds the SQLite database.
 5. **First-run checklist:**
    * sign in to `/admin`, delete the sample signals;
    * set the Telegram / Website / Instagram links and the support e-mail;
-   * confirm the Overview tab no longer warns about the webhook secret;
-   * fire one test alert from TradingView and watch it land in the logs.
+   * publish a test signal from the Signals tab and watch it land in the delivery logs.
 
 **Android app.** The client is wrapped with Capacitor (`android/`) and packaged from the same
 web build. Notifications while the app is fully closed require a Firebase service account
@@ -622,13 +575,11 @@ and nothing is lost — the items simply wait.
 
 ---
 
-## 15. Troubleshooting
+## 14. Troubleshooting
 
 | Symptom | Cause / fix |
 | --- | --- |
-| Webhook returns `401` | Secret mismatch. Compare `TRADINGVIEW_WEBHOOK_SECRET` with the alert message (never logged — check the value, not the log). |
-| Webhook returns `422` | `symbol` or `action` missing, or an action other than BUY/SELL/CLOSE. |
-| Alert accepted but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `sell_pref_off`, …). |
+| Signal published but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `device_disabled`, …). |
 | Notifications only arrive with the app open | No Firebase service account is configured (`GOOGLE_APPLICATION_CREDENTIALS` unset). That is the expected fallback behaviour. |
 | An edit sent no notification | Nothing actually changed, `notify` was unticked, or no device had received the original signal yet (SENT/DELIVERED). |
 | Admin password change ignored | Credentials are seeded once. Remove the `admin_password_hash` setting row and restart. |

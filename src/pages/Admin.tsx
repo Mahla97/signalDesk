@@ -15,18 +15,17 @@ import { api, ApiError } from '../lib/api';
 import { KEYS, read, remove, write } from '../lib/storage';
 import { Badge, Button, ErrorState, Panel, Skeleton } from '../components/ui';
 import { formatDateTime, formatPrice } from '../lib/time';
-import type { AdminUser, DeliveryLog, Signal, SignalChange, WebhookEvent } from '../lib/types';
+import type { AdminUser, DeliveryLog, Signal, SignalChange } from '../lib/types';
 
 type Overview = {
   users: number;
-  proUsers: number;
+  partnerUsers: number;
   devices: number;
   signals: number;
   pushSent: number;
   pushFailed: number;
   editedSignals?: number;
   performance: { total: number; wins: number; losses: number; winRate: number };
-  webhookSecretConfigured: boolean;
 };
 
 type Tab = 'overview' | 'users' | 'signals' | 'logs' | 'settings';
@@ -274,7 +273,7 @@ function OverviewTab(): React.ReactElement {
 
   const cards = [
     { label: 'Users', value: data.users },
-    { label: 'Active Pro', value: data.proUsers },
+    { label: 'Active Partner', value: data.partnerUsers },
     { label: 'Devices', value: data.devices },
     { label: 'Signals', value: data.signals },
     { label: 'Push sent', value: data.pushSent },
@@ -299,16 +298,6 @@ function OverviewTab(): React.ReactElement {
           <span className="font-bold text-emerald-400">{data.performance.winRate}% win rate</span>
         </p>
       </Panel>
-      {!data.webhookSecretConfigured ? (
-        <Panel className="border-amber-500/30 p-4">
-          <p className="text-sm font-bold text-amber-200">Webhook secret not set</p>
-          <p className="mt-1 text-sm text-slate-400">
-            The server is using the built-in default secret. Set the environment variable
-            <span className="mx-1 font-mono text-slate-200">TRADINGVIEW_WEBHOOK_SECRET</span>
-            before pointing real TradingView alerts at it.
-          </p>
-        </Panel>
-      ) : null}
     </div>
   );
 }
@@ -322,6 +311,7 @@ function UsersTab(): React.ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<Record<number, number>>({});
   const [pending, setPending] = useState<Record<number, boolean>>({});
+  const [confirmId, setConfirmId] = useState<number | null>(null);
 
   const load = useCallback(async (q: string) => {
     setLoading(true);
@@ -342,7 +332,7 @@ function UsersTab(): React.ReactElement {
     void load('');
   }, [load]);
 
-  async function setPlan(user: AdminUser, plan: 'PRO' | 'FREE'): Promise<void> {
+  async function setPlan(user: AdminUser, plan: 'PARTNER' | 'MEMBER'): Promise<void> {
     setPending((c) => ({ ...c, [user.id]: true }));
     try {
       const res = await api<{ user: AdminUser }>(`/admin/users/${user.id}/plan`, {
@@ -371,6 +361,19 @@ function UsersTab(): React.ReactElement {
       setError(err instanceof ApiError ? err.message : 'Could not update the user.');
     } finally {
       setPending((c) => ({ ...c, [user.id]: false }));
+    }
+  }
+
+  async function deleteUser(id: number): Promise<void> {
+    setPending((c) => ({ ...c, [id]: true }));
+    try {
+      await api(`/admin/users/${id}`, { method: 'DELETE', admin: true });
+      setUsers((current) => current.filter((u) => u.id !== id));
+      setConfirmId(null);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not delete the user.');
+    } finally {
+      setPending((c) => ({ ...c, [id]: false }));
     }
   }
 
@@ -404,15 +407,15 @@ function UsersTab(): React.ReactElement {
             <Panel key={user.id} className="p-4" testId={`admin-user-${user.id}`}>
               <div className="flex flex-wrap items-center gap-2">
                 <span className="min-w-0 flex-1 truncate text-sm font-bold text-slate-100">{user.email}</span>
-                <Badge tone={user.plan === 'PRO' ? 'pro' : 'neutral'}>{user.plan}</Badge>
+                <Badge tone={user.plan === 'PARTNER' ? 'partner' : 'neutral'}>{user.plan === 'PARTNER' ? 'PARTNER' : 'MEMBER'}</Badge>
                 {user.suspended ? <Badge tone="sell">SUSPENDED</Badge> : null}
               </div>
               <p className="mt-1 text-xs text-slate-500">
                 Joined {formatDateTime(user.createdAt, 'UTC')} · last seen{' '}
                 {user.lastSeenAt ? formatDateTime(user.lastSeenAt, 'UTC') : '—'} (UTC)
               </p>
-              {user.proEndAt ? (
-                <p className="mt-1 text-xs text-slate-400">Pro until {formatDateTime(user.proEndAt, 'UTC')} UTC</p>
+              {user.partnerEndAt ? (
+                <p className="mt-1 text-xs text-slate-400">Partner until {formatDateTime(user.partnerEndAt, 'UTC')} UTC</p>
               ) : null}
 
               <div className="mt-3 flex flex-wrap items-center gap-2">
@@ -429,11 +432,11 @@ function UsersTab(): React.ReactElement {
                   ))}
                 </select>
                 <Button
-                  onClick={() => void setPlan(user, user.plan === 'PRO' ? 'FREE' : 'PRO')}
+                  onClick={() => void setPlan(user, user.plan === 'PARTNER' ? 'MEMBER' : 'PARTNER')}
                   disabled={pending[user.id]}
                   testId={`admin-toggle-plan-${user.id}`}
                 >
-                  {user.plan === 'PRO' ? 'Set Free' : 'Grant Pro'}
+                  {user.plan === 'PARTNER' ? 'Set Member' : 'Grant Partner'}
                 </Button>
                 <Button
                   variant="danger"
@@ -443,6 +446,31 @@ function UsersTab(): React.ReactElement {
                 >
                   {user.suspended ? 'Unsuspend' : 'Suspend'}
                 </Button>
+                {confirmId === user.id ? (
+                  <span className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-rose-300">Delete this account?</span>
+                    <Button
+                      variant="danger"
+                      onClick={() => void deleteUser(user.id)}
+                      disabled={pending[user.id]}
+                      testId={`admin-confirm-delete-${user.id}`}
+                    >
+                      {pending[user.id] ? 'Deleting…' : 'Confirm'}
+                    </Button>
+                    <Button variant="ghost" onClick={() => setConfirmId(null)} disabled={pending[user.id]}>
+                      Cancel
+                    </Button>
+                  </span>
+                ) : (
+                  <Button
+                    variant="danger"
+                    onClick={() => setConfirmId(user.id)}
+                    disabled={pending[user.id]}
+                    testId={`admin-delete-user-${user.id}`}
+                  >
+                    Delete
+                  </Button>
+                )}
               </div>
             </Panel>
           ))}
@@ -1021,7 +1049,7 @@ function SignalsTab(): React.ReactElement {
       <Panel className="p-4">
         <h3 className="text-sm font-bold text-slate-100">Publish a signal manually</h3>
         <p className="mt-1 text-xs text-slate-500">
-          Goes through the same pipeline as a TradingView alert: saved, then queued for delivery.
+          Saved, then queued for delivery to every eligible device.
         </p>
         <form
           onSubmit={(e) => {
@@ -1290,8 +1318,8 @@ function SignalsTab(): React.ReactElement {
             </table>
           </div>
           <p className="text-xs text-slate-500">
-            Close price only exists once a signal is closed — it is written by the “Close” action, by a
-            TradingView CLOSE alert, or by hand in the edit dialog.
+            Close price only exists once a signal is closed — it is written by the “Close” action or by hand
+            in the edit dialog.
           </p>
         </>
       )}
@@ -1358,7 +1386,6 @@ function SignalsTab(): React.ReactElement {
 
 function LogsTab(): React.ReactElement {
   const [deliveries, setDeliveries] = useState<DeliveryLog[]>([]);
-  const [events, setEvents] = useState<WebhookEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -1366,11 +1393,10 @@ function LogsTab(): React.ReactElement {
     setLoading(true);
     setError(null);
     try {
-      const res = await api<{ deliveries: DeliveryLog[]; webhookEvents: WebhookEvent[] }>('/admin/logs', {
+      const res = await api<{ deliveries: DeliveryLog[] }>('/admin/logs', {
         admin: true,
       });
       setDeliveries(res.deliveries);
-      setEvents(res.webhookEvents);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not load the logs.');
     } finally {
@@ -1442,44 +1468,6 @@ function LogsTab(): React.ReactElement {
           </div>
         )}
       </div>
-
-      <div>
-        <h3 className="mb-2 text-sm font-bold text-slate-100">Webhook events (latest 50)</h3>
-        {events.length === 0 ? (
-          <Panel className="p-6 text-center text-sm text-slate-400">No webhook traffic yet.</Panel>
-        ) : (
-          <div className="overflow-x-auto rounded-2xl border border-[#1d2739]">
-            <table className="w-full min-w-[640px] text-left text-sm">
-              <thead className="bg-white/5 text-xs uppercase tracking-wide text-slate-400">
-                <tr>
-                  <th className="px-3 py-2">#</th>
-                  <th className="px-3 py-2">Outcome</th>
-                  <th className="px-3 py-2">External id</th>
-                  <th className="px-3 py-2">Message</th>
-                  <th className="px-3 py-2">Time (UTC)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {events.map((e) => (
-                  <tr key={e.id} className="border-t border-[#1a2334]">
-                    <td className="px-3 py-2 font-mono text-xs text-slate-500">{e.id}</td>
-                    <td className="px-3 py-2">
-                      <Badge tone={e.outcome === 'ACCEPTED' ? 'buy' : e.outcome === 'DUPLICATE' ? 'neutral' : 'sell'}>
-                        {e.outcome}
-                      </Badge>
-                    </td>
-                    <td className="px-3 py-2 break-all font-mono text-xs text-slate-400">
-                      {e.external_signal_id ?? '—'}
-                    </td>
-                    <td className="px-3 py-2 text-xs text-slate-400">{e.message}</td>
-                    <td className="px-3 py-2 text-xs text-slate-500">{formatDateTime(e.created_at, 'UTC')}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
     </div>
   );
 }
@@ -1530,17 +1518,39 @@ function SettingsTab(): React.ReactElement {
   if (!settings) return <Skeleton className="h-60 w-full" />;
 
   const fields: { key: string; label: string; hint?: string }[] = [
-    { key: 'free_visible_count', label: 'Unlocked signals for free users' },
+    { key: 'member_visible_count', label: 'Unlocked signals for Members' },
     { key: 'history_days', label: 'Closed history window (days)' },
     { key: 'telegram_url', label: 'Telegram link' },
     { key: 'website_url', label: 'Website link' },
     { key: 'instagram_url', label: 'Instagram link' },
     { key: 'support_email', label: 'Support email' },
+    { key: 'privacy_policy_url', label: 'Privacy policy link' },
   ];
 
   return (
     <Panel className="p-5" testId="admin-settings">
       <form onSubmit={save} className="space-y-3">
+        <div className="rounded-xl border border-[#243049] bg-[#0c1220] p-3">
+          <p className="text-sm font-bold text-slate-200">Announcement</p>
+          <label className="mt-2 flex cursor-pointer items-center gap-2">
+            <input
+              type="checkbox"
+              checked={settings.announcement_enabled === '1'}
+              onChange={(e) => setSettings({ ...settings, announcement_enabled: e.target.checked ? '1' : '0' })}
+              data-testid="admin-announcement-enabled"
+              className="h-5 w-5 rounded border-slate-600 bg-transparent accent-sky-500"
+            />
+            <span className="text-sm text-slate-300">Show announcement to users</span>
+          </label>
+          <textarea
+            value={settings.announcement_text ?? ''}
+            onChange={(e) => setSettings({ ...settings, announcement_text: e.target.value })}
+            placeholder="Write an announcement…"
+            rows={3}
+            data-testid="admin-announcement-text"
+            className={inputClass + ' mt-2'}
+          />
+        </div>
         {fields.map((f) => (
           <label key={f.key} className="block">
             <span className="mb-1 block text-sm font-bold text-slate-200">{f.label}</span>
@@ -1556,7 +1566,7 @@ function SettingsTab(): React.ReactElement {
           <Button type="submit" disabled={busy} testId="admin-settings-save">
             {busy ? 'Saving…' : 'Save settings'}
           </Button>
-          {saved ? <Badge tone="pro">Saved</Badge> : null}
+          {saved ? <Badge tone="partner">Saved</Badge> : null}
         </div>
       </form>
     </Panel>

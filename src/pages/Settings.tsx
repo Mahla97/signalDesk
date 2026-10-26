@@ -47,7 +47,7 @@ function Toggle({
 }
 
 export default function Settings(): React.ReactElement {
-  const { timezone, setTimezone, prefs, setPrefs, config, isPro } = useStore();
+  const { timezone, setTimezone, prefs, setPrefs, config, isPartner } = useStore();
   const [saved, setSaved] = useState(false);
 
   function update(patch: Partial<NotificationPreferences>): void {
@@ -79,7 +79,7 @@ export default function Settings(): React.ReactElement {
             <BellRing className="h-5 w-5 text-sky-300" aria-hidden="true" />
             Notifications
           </h2>
-          {saved ? <Badge tone="pro">Saved</Badge> : null}
+          {saved ? <Badge tone="partner">Saved</Badge> : null}
         </div>
 
         <div className="mt-2">
@@ -90,36 +90,12 @@ export default function Settings(): React.ReactElement {
             onChange={(v) => update({ notificationsEnabled: v })}
             testId="toggle-notifications"
           />
-          <Toggle
-            label="Trading signals"
-            description="New BUY / SELL / CLOSE alerts from our strategies."
-            checked={prefs.tradingSignalsEnabled}
-            onChange={(v) => update({ tradingSignalsEnabled: v })}
-            testId="toggle-trading-signals"
-            disabled={!prefs.notificationsEnabled}
-          />
-          <Toggle
-            label="BUY signals"
-            description="Long entries."
-            checked={prefs.buySignalsEnabled}
-            onChange={(v) => update({ buySignalsEnabled: v })}
-            testId="toggle-buy-signals"
-            disabled={!prefs.notificationsEnabled || !prefs.tradingSignalsEnabled}
-          />
-          <Toggle
-            label="SELL signals"
-            description="Short entries."
-            checked={prefs.sellSignalsEnabled}
-            onChange={(v) => update({ sellSignalsEnabled: v })}
-            testId="toggle-sell-signals"
-            disabled={!prefs.notificationsEnabled || !prefs.tradingSignalsEnabled}
-          />
         </div>
 
         <p className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-400" data-testid="settings-quota">
-          {isPro
-            ? 'Pro plan: you receive every signal in real time.'
-            : `Free plan: the first ${config.freeVisibleCount} signals of the day are unlocked; the rest are blurred.`}
+          {isPartner
+            ? 'Partner: you receive every signal in real time.'
+            : `Member: the first ${config.memberVisibleCount} signals of the day are unlocked; the rest are blurred.`}
         </p>
 
         <p className="mt-2 flex items-start gap-2 text-xs text-slate-500">
@@ -139,11 +115,21 @@ export default function Settings(): React.ReactElement {
           <Disclaimer />
         </div>
         <p className="mt-3 text-sm text-slate-400">
-          Need help or want to become a Pro member?{' '}
+          Need help or want to become a Partner?{' '}
           <Link to="/contact" className="font-bold text-sky-300 hover:text-sky-200">
             Contact us
           </Link>
           .
+        </p>
+        <p className="mt-2 text-sm text-slate-400">
+          <a
+            href={config.privacyPolicyUrl}
+            target="_blank"
+            rel="noreferrer noopener"
+            className="font-bold text-sky-300 hover:text-sky-200"
+          >
+            Privacy Policy
+          </a>
         </p>
         <p className="mt-2 text-xs text-slate-600">SignalDesk v1.0 — signals are guidance only.</p>
       </Panel>

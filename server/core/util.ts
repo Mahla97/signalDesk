@@ -70,16 +70,6 @@ export function verifyPassword(password: string, stored: string): boolean {
   return timingSafeEqual(candidate, expected);
 }
 
-/** Constant-time string compare — used for the webhook secret. */
-export function safeEqual(a: string, b: string): boolean {
-  const bufA = Buffer.from(String(a ?? ''), 'utf8');
-  const bufB = Buffer.from(String(b ?? ''), 'utf8');
-  // Hash both so length differences don't leak and lengths always match.
-  const ha = createHash('sha256').update(bufA).digest();
-  const hb = createHash('sha256').update(bufB).digest();
-  return timingSafeEqual(ha, hb) && bufA.length === bufB.length;
-}
-
 type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
 

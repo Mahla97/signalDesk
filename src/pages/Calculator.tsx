@@ -261,7 +261,7 @@ export default function Calculator(): React.ReactElement {
               Work out how large a trade can be while risking a fixed slice of your account.
             </p>
           </div>
-          {form.symbol ? <Badge tone="pro">{form.symbol}</Badge> : null}
+          {form.symbol ? <Badge tone="partner">{form.symbol}</Badge> : null}
         </div>
       </Panel>
 

@@ -27,17 +27,17 @@ import type { AppConfig, AppUser, NotificationPreferences, PendingNotification }
 
 const DEFAULT_PREFS: NotificationPreferences = {
   notificationsEnabled: true,
-  tradingSignalsEnabled: true,
-  buySignalsEnabled: true,
-  sellSignalsEnabled: true,
 };
 
 const DEFAULT_CONFIG: AppConfig = {
-  telegramUrl: 'https://t.me/signaldesk',
+  telegramUrl: 'https://t.me/SignalDesk_com',
   websiteUrl: 'https://signaldesk.example.com',
   instagramUrl: 'https://instagram.com/signaldesk',
   supportEmail: 'support@signaldesk.example.com',
-  freeVisibleCount: 3,
+  privacyPolicyUrl: 'https://signaldesk.example.com/privacy',
+  announcementEnabled: false,
+  announcementText: '',
+  memberVisibleCount: 3,
   historyDays: 14,
   stats: { total: 0, wins: 0, losses: 0, winRate: 0 },
 };
@@ -51,7 +51,7 @@ type Store = {
   prefs: NotificationPreferences;
   config: AppConfig;
   user: AppUser | null;
-  isPro: boolean;
+  isPartner: boolean;
   toasts: Toast[];
   signalTick: number;
   completeOnboarding: (timezone: string) => void;
@@ -61,6 +61,9 @@ type Store = {
   signUp: (email: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
   refreshUser: () => Promise<void>;
+  requestPasswordReset: (email: string) => Promise<void>;
+  resetPassword: (token: string, password: string) => Promise<void>;
+  deleteAccount: () => Promise<void>;
   dismissToast: (id: number) => void;
 };
 
@@ -263,6 +266,20 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
     setUser(null);
   }, []);
 
+  const requestPasswordReset = useCallback(async (email: string) => {
+    await api('/auth/forgot-password', { method: 'POST', body: { email } });
+  }, []);
+
+  const resetPassword = useCallback(async (token: string, password: string) => {
+    await api('/auth/reset-password', { method: 'POST', body: { token, password } });
+  }, []);
+
+  const deleteAccount = useCallback(async () => {
+    await api('/auth/me', { method: 'DELETE' });
+    remove(KEYS.session);
+    setUser(null);
+  }, []);
+
   const dismissToast = useCallback((id: number) => {
     setToasts((current) => current.filter((t) => t.id !== id));
   }, []);
@@ -275,7 +292,7 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       prefs,
       config,
       user,
-      isPro: user?.plan === 'PRO' && !user.suspended,
+      isPartner: user?.plan === 'PARTNER' && !user.suspended,
       toasts,
       signalTick,
       completeOnboarding,
@@ -285,6 +302,9 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       signUp,
       signOut,
       refreshUser,
+      requestPasswordReset,
+      resetPassword,
+      deleteAccount,
       dismissToast,
     }),
     [
@@ -303,6 +323,9 @@ export function StoreProvider({ children }: { children: ReactNode }): React.Reac
       signUp,
       signOut,
       refreshUser,
+      requestPasswordReset,
+      resetPassword,
+      deleteAccount,
       dismissToast,
     ],
   );

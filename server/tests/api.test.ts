@@ -4,12 +4,10 @@
  * Run the backend first:   npm run server
  * Then in a second shell:  npm run test:api
  *
- * Override the target with TEST_BASE_URL and the secret with
- * TRADINGVIEW_WEBHOOK_SECRET (must match the running server).
+ * Override the target with TEST_BASE_URL.
  */
 
 const BASE = process.env.TEST_BASE_URL ?? 'http://localhost:3001';
-const SECRET = process.env.TRADINGVIEW_WEBHOOK_SECRET ?? 'change-me-tradingview-secret';
 
 let passed = 0;
 let failed = 0;
@@ -66,14 +64,14 @@ async function main(): Promise<void> {
     token: deviceToken,
     platform: 'android',
     timezone: 'UTC',
-    preferences: { notificationsEnabled: true, tradingSignalsEnabled: true, buySignalsEnabled: true, sellSignalsEnabled: true },
+    preferences: { notificationsEnabled: true },
   });
   check('registers a device', reg.status === 200 && typeof reg.json.id === 'number', reg.json);
 
   const reReg = await post('/api/devices/push-token', { token: deviceToken, platform: 'android' });
   check('re-registering the same token does not duplicate', reReg.json.id === reg.json.id, reReg.json);
 
-  // Early admin login: the free plan now locks today's newest signals, so
+  // Early admin login: Members now see today's newest signals locked, so
   // storage-level assertions read through the (unredacted) admin list instead of
   // as an anonymous viewer.
   const earlyAdmin = await post('/api/admin/login', {
@@ -82,12 +80,9 @@ async function main(): Promise<void> {
   });
   const earlyAdminHeaders = { 'x-admin-token': String(earlyAdmin.json.token ?? '') };
 
-  /* -------------------------------- webhook -------------------------------- */
-  console.log('\ntradingview webhook');
-  const externalId = 'test-signal-' + stamp;
+  /* --------------------------- admin signal creation ------------------------ */
+  console.log('\nadmin creates signals');
   const payload = {
-    secret: SECRET,
-    id: externalId,
     strategy: 'Test Strategy',
     symbol: 'BTCUSDT',
     action: 'BUY',
@@ -98,55 +93,50 @@ async function main(): Promise<void> {
     time: new Date().toISOString(),
   };
 
-  const valid = await post('/api/webhooks/tradingview', payload);
-  check('accepts a valid webhook', valid.status === 202 && valid.json.duplicate === false, valid.json);
-  const signalId = Number(valid.json.signalId);
+  const valid = await post('/api/admin/signals', payload, earlyAdminHeaders);
+  check('accepts a valid signal', valid.status === 201 && typeof valid.json.signal?.id === 'number', valid.json);
+  const signalId = Number(valid.json.signal?.id);
 
-  const dupe = await post('/api/webhooks/tradingview', payload);
-  check('is idempotent for a replayed alert', dupe.status === 200 && dupe.json.duplicate === true, dupe.json);
-  check('dedupe returns the same signal id', Number(dupe.json.signalId) === signalId, dupe.json);
-
-  const badSecret = await post('/api/webhooks/tradingview', { ...payload, secret: 'wrong-secret', id: externalId + '-x' });
-  check('rejects an invalid secret', badSecret.status === 401, badSecret.json);
-
-  const badPayload = await post('/api/webhooks/tradingview', { secret: SECRET, symbol: 'BTCUSDT' });
+  const badPayload = await post('/api/admin/signals', { symbol: 'BTCUSDT' }, earlyAdminHeaders);
   check('rejects a payload with no action', badPayload.status === 422, badPayload.json);
 
-  const badAction = await post('/api/webhooks/tradingview', { secret: SECRET, symbol: 'BTCUSDT', action: 'HODL' });
+  const badAction = await post('/api/admin/signals', { symbol: 'BTCUSDT', action: 'HODL' }, earlyAdminHeaders);
   check('rejects an unsupported action', badAction.status === 422, badAction.json);
 
   /* ---------------------------- multiple take profits ----------------------- */
   console.log('\nmultiple take profits');
-  const multiId = 'test-multi-' + stamp;
-  const multi = await post('/api/webhooks/tradingview', {
-    secret: SECRET,
-    id: multiId,
-    strategy: 'Test Strategy',
-    symbol: 'ETHUSDT',
-    action: 'BUY',
-    price: 3000,
-    stopLoss: 2900,
-    takeProfits: [3100, 3250, 3400],
-    timeframe: '1h',
-    time: new Date().toISOString(),
-  });
-  check('accepts a webhook carrying several take profits', multi.status === 202, multi.json);
-  const multiSignalId = Number(multi.json.signalId);
+  const multi = await post(
+    '/api/admin/signals',
+    {
+      strategy: 'Test Strategy',
+      symbol: 'ETHUSDT',
+      action: 'BUY',
+      price: 3000,
+      stopLoss: 2900,
+      takeProfits: [3100, 3250, 3400],
+      timeframe: '1h',
+      time: new Date().toISOString(),
+    },
+    earlyAdminHeaders,
+  );
+  check('accepts a signal carrying several take profits', multi.status === 201, multi.json);
+  const multiSignalId = Number(multi.json.signal?.id);
 
-  const numberedId = 'test-numbered-' + stamp;
-  const numbered = await post('/api/webhooks/tradingview', {
-    secret: SECRET,
-    id: numberedId,
-    symbol: 'SOLUSDT',
-    action: 'SELL',
-    price: 150,
-    tp1: 145,
-    tp2: 140,
-    time: new Date().toISOString(),
-  });
-  const numberedSignalId = Number(numbered.json.signalId);
+  const numbered = await post(
+    '/api/admin/signals',
+    {
+      symbol: 'SOLUSDT',
+      action: 'SELL',
+      price: 150,
+      tp1: 145,
+      tp2: 140,
+      time: new Date().toISOString(),
+    },
+    earlyAdminHeaders,
+  );
+  const numberedSignalId = Number(numbered.json.signal?.id);
 
-  // Storage assertions read through the admin list (unredacted) — a free viewer
+  // Storage assertions read through the admin list (unredacted) — a Member
   // sees today's newest signals as locked.
   const adminList = await get('/api/admin/signals?page=1&pageSize=50', earlyAdminHeaders);
   const adminItems = (adminList.json.items ?? []) as { id: number; takeProfits?: number[] }[];
@@ -156,20 +146,20 @@ async function main(): Promise<void> {
   const numberedAdmin = adminItems.find((s) => s.id === numberedSignalId);
   check('tp1/tp2 style payloads are supported', (numberedAdmin?.takeProfits ?? []).join(',') === '145,140', numberedAdmin);
 
-  /* ------------------------------ free vs pro ------------------------------- */
-  console.log('\nfree vs pro access');
-  const freeList = await get('/api/signals?status=open&pageSize=30');
-  const items = (freeList.json.items ?? []) as { locked: boolean }[];
+  /* ---------------------------- member vs partner ---------------------------- */
+  console.log('\nmember vs partner access');
+  const memberList = await get('/api/signals?status=open&pageSize=30');
+  const items = (memberList.json.items ?? []) as { locked: boolean }[];
   const lockedCount = items.filter((i) => i.locked).length;
-  check('anonymous viewer is treated as free', freeList.json.isPro === false, freeList.json.isPro);
-  check('free viewer sees some locked signals', items.length === 0 || lockedCount >= 0, { lockedCount });
+  check('anonymous viewer is treated as a Member', memberList.json.isPartner === false, memberList.json.isPartner);
+  check('Member viewer sees some locked signals', items.length === 0 || lockedCount >= 0, { lockedCount });
 
   const lockedItem = items.find((i) => i.locked) as { id: number } | undefined;
   if (lockedItem) {
     const denied = await get('/api/signals/' + lockedItem.id);
-    check('free viewer cannot open a locked signal', denied.status === 403, denied.json);
+    check('Member viewer cannot open a locked signal', denied.status === 403, denied.json);
   } else {
-    check('free viewer cannot open a locked signal (skipped — nothing locked)', true);
+    check('Member viewer cannot open a locked signal (skipped — nothing locked)', true);
   }
 
   const closed = await get('/api/signals?status=closed&pageSize=30');
@@ -194,7 +184,38 @@ async function main(): Promise<void> {
 
   const me = await get('/api/auth/me', { Authorization: 'Bearer ' + userToken });
   const meUser = me.json.user as { plan: string } | null;
-  check('new account starts on the free plan', meUser?.plan === 'FREE', meUser);
+  check('new account starts as a Member', meUser?.plan === 'MEMBER', meUser);
+
+  /* ------------------------------ password reset ----------------------------- */
+  console.log('\npassword reset');
+  const resetEmail = `reset_${stamp}@example.com`;
+  const resetSignup = await post('/api/auth/signup', { email: resetEmail, password: 'OriginalPass123' });
+  check('password-reset user can sign up', resetSignup.status === 201, resetSignup.json);
+
+  const forgotBad = await post('/api/auth/forgot-password', { email: 'not-an-email' });
+  check('forgot password rejects an invalid email', forgotBad.status === 422, forgotBad.json);
+
+  const forgotUnknown = await post('/api/auth/forgot-password', { email: 'nobody_' + stamp + '@example.com' });
+  check('forgot password is silent for unknown emails', forgotUnknown.status === 200 && forgotUnknown.json.ok === true, forgotUnknown.json);
+
+  const forgot = await post('/api/auth/forgot-password', { email: resetEmail });
+  check('forgot password accepts a known email', forgot.status === 200 && forgot.json.ok === true, forgot.json);
+
+  const devResetUrl = forgot.json.devResetUrl as string | undefined;
+  const resetToken = devResetUrl ? new URL(devResetUrl).searchParams.get('token') : null;
+  check('forgot password returns a dev reset link without SMTP', Boolean(resetToken), forgot.json);
+
+  const resetBad = await post('/api/auth/reset-password', { token: 'bogus-token', password: 'NewPassword123' });
+  check('reset password rejects a bogus token', resetBad.status === 400, resetBad.json);
+
+  const reset = await post('/api/auth/reset-password', { token: resetToken ?? '', password: 'NewPassword123' });
+  check('reset password succeeds with a valid token', reset.status === 200, reset.json);
+
+  const oldLogin = await post('/api/auth/login', { email: resetEmail, password: 'OriginalPass123' });
+  check('old password no longer works after reset', oldLogin.status === 401, oldLogin.json);
+
+  const newLogin = await post('/api/auth/login', { email: resetEmail, password: 'NewPassword123' });
+  check('new password works after reset', newLogin.status === 200, newLogin.json);
 
   /* --------------------------------- admin ---------------------------------- */
   console.log('\nadmin panel');
@@ -217,24 +238,24 @@ async function main(): Promise<void> {
     check('admin can list users', Boolean(created), list.length);
 
     if (created) {
-      const upgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'PRO', days: 30 }, adminHeaders);
-      const upgraded = upgrade.json.user as { plan: string; proEndAt: string } | undefined;
-      check('admin can grant PRO with a duration', upgraded?.plan === 'PRO' && Boolean(upgraded?.proEndAt), upgrade.json);
+      const upgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'PARTNER', days: 30 }, adminHeaders);
+      const upgraded = upgrade.json.user as { plan: string; partnerEndAt: string } | undefined;
+      check('admin can grant Partner with a duration', upgraded?.plan === 'PARTNER' && Boolean(upgraded?.partnerEndAt), upgrade.json);
 
-      const proView = await get('/api/signals?status=open&pageSize=30', { Authorization: 'Bearer ' + userToken });
-      const proItems = (proView.json.items ?? []) as { locked: boolean }[];
-      check('pro user sees every signal unlocked', proView.json.isPro === true && proItems.every((i) => !i.locked), {
-        isPro: proView.json.isPro,
+      const partnerView = await get('/api/signals?status=open&pageSize=30', { Authorization: 'Bearer ' + userToken });
+      const partnerItems = (partnerView.json.items ?? []) as { locked: boolean }[];
+      check('Partner sees every signal unlocked', partnerView.json.isPartner === true && partnerItems.every((i) => !i.locked), {
+        isPartner: partnerView.json.isPartner,
       });
 
       if (signalId) {
         const detail = await get('/api/signals/' + signalId, { Authorization: 'Bearer ' + userToken });
-        check('pro user can open any signal detail', detail.status === 200, detail.status);
+        check('Partner can open any signal detail', detail.status === 200, detail.status);
       }
 
-      const downgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'FREE' }, adminHeaders);
+      const downgrade = await post(`/api/admin/users/${created.id}/plan`, { plan: 'MEMBER' }, adminHeaders);
       const downgraded = downgrade.json.user as { plan: string } | undefined;
-      check('admin can move a user back to FREE', downgraded?.plan === 'FREE', downgrade.json);
+      check('admin can move a user back to Member', downgraded?.plan === 'MEMBER', downgrade.json);
     }
 
     const logs = await get('/api/admin/logs', adminHeaders);
@@ -326,6 +347,35 @@ async function main(): Promise<void> {
     const closeIt = await post(`/api/admin/signals/${signalId}/close`, { closePrice: 67000 }, adminHeaders);
     const closedSignal = (closeIt.json.signal ?? {}) as { status?: string; closePrice?: number };
     check('closing a signal records its close price', closedSignal.status === 'CLOSED' && closedSignal.closePrice === 67000, closeIt.json);
+  }
+
+  /* ----------------------------- delete account ----------------------------- */
+  console.log('\ndelete account');
+  const delEmail = `delete_${stamp}@example.com`;
+  const delSignup = await post('/api/auth/signup', { email: delEmail, password: 'StrongPass123' });
+  check('delete-account user can sign up', delSignup.status === 201, delSignup.json);
+  const delToken = String(delSignup.json.token ?? '');
+  const delMe = await get('/api/auth/me', { Authorization: 'Bearer ' + delToken });
+  check('delete-account user exists', (delMe.json.user as { email?: string } | null)?.email === delEmail, delMe.json);
+  const del = await request('DELETE', '/api/auth/me', undefined, { Authorization: 'Bearer ' + delToken });
+  check('delete account succeeds', del.status === 200 && del.json.ok === true, del.json);
+  const delAfter = await get('/api/auth/me', { Authorization: 'Bearer ' + delToken });
+  check('deleted account is gone', delAfter.json.user === null, delAfter.json);
+
+  /* --------------------------- admin delete user ---------------------------- */
+  console.log('\nadmin delete user');
+  const adminDelEmail = `admindelete_${stamp}@example.com`;
+  const adminDelSignup = await post('/api/auth/signup', { email: adminDelEmail, password: 'StrongPass123' });
+  const adminDelUser = (adminDelSignup.json.user ?? {}) as { id?: number };
+  const adminDelToken = String(adminDelSignup.json.token ?? '');
+  check('admin-delete user can sign up', adminDelSignup.status === 201 && Boolean(adminDelUser.id), adminDelSignup.json);
+
+  if (adminToken && adminDelUser.id) {
+    const adminDel = await request('DELETE', `/api/admin/users/${adminDelUser.id}`, undefined, adminHeaders);
+    check('admin can delete a user', adminDel.status === 200 && adminDel.json.ok === true, adminDel.json);
+
+    const adminDelCheck = await get('/api/auth/me', { Authorization: 'Bearer ' + adminDelToken });
+    check('admin-deleted user is gone', adminDelCheck.json.user === null, adminDelCheck.json);
   }
 
   console.log(`\n${passed} passed, ${failed} failed`);

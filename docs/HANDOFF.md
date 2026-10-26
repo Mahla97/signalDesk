@@ -13,12 +13,12 @@ trust this file first.
 A mobile-first crypto + forex trading-signal app with this pipeline:
 
 ```
-TradingView alert  →  webhook  →  SQLite  →  per-device delivery queue  →  FCM push
-                                                                         ↘  (web) device polls the queue
+admin publishes a signal  →  SQLite  →  per-device delivery queue  →  FCM push
+                                                                    ↘  (web) device polls the queue
 ```
 
 - End users see a live feed, a position-size calculator, and closed-signal history.
-- A Free/Pro model gates how many signals are readable and how many pushes go out.
+- A Member/Partner model gates how many signals are readable and how many pushes go out.
 - Staff manage everything from an admin panel (same app, `/admin` route).
 
 ## 2. Stack
@@ -36,7 +36,7 @@ No ORM, no Express, no external services required to run.
 
 ## 3. Running it locally
 
-Requires Node 18+ (dev box has 24) and, for Android, JDK 21.
+Requires Node 22.5+ (the backend uses `node:sqlite`) and, for Android, JDK 21.
 
 ```bash
 npm install          # once
@@ -58,7 +58,7 @@ survives a restart.
 
 ```bash
 VITE_API_BASE_URL=http://10.0.2.2:3001 npm run build   # bake in the API origin
-npx cap sync android
+CAPACITOR_ALLOW_MIXED_CONTENT=true npx cap sync android  # allow http:// backend for debug
 cd android
 JAVA_HOME=/opt/homebrew/opt/openjdk@21 ANDROID_HOME=$HOME/Library/Android/sdk ./gradlew :app:assembleDebug
 $HOME/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/debug/app-debug.apk
@@ -83,23 +83,32 @@ Cleartext `http://` is allowed in debug only (`capacitor.config.ts` +
 | `npm run build` | Production build into `dist/` |
 | `npm run preview` | Serve the built app |
 | `npm run server` | Start the API (`server/index.ts` via tsx) |
-| `npm run test:api` | Full API suite (48 checks) against a live server |
+| `npm run test:api` | Full API suite (61 checks) against a live server |
 | `npm run test:admin` | Admin add/edit/delete lifecycle suite (14 checks) |
 
 Tests run against a **live server** and write real rows — use a disposable DB.
 
 ## 5. Environment variables
 
-All backend-side. Every one has a safe default; none are required to boot.
+All backend-side. Every one has a safe default; none are required to boot in
+development. In **production** (`NODE_ENV=production`) the server refuses to
+start on the guessable default, so `ADMIN_PASSWORD` becomes mandatory.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TRADINGVIEW_WEBHOOK_SECRET` | `change-me-tradingview-secret` | Secret TradingView sends; constant-time compared. **Set before go-live.** |
+| `NODE_ENV` | — | Set to `production` for a release deploy; enables the guards below. |
 | `ADMIN_USERNAME` | `admin` | Only read on first boot. |
-| `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Only read on first boot, stored hashed. **Change before go-live.** |
+| `ADMIN_PASSWORD` | `Kx7-Panel-Trade-92` | Only read on first boot, stored hashed. **Must be set in production.** |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON → enables FCM push. |
 | `FCM_SERVICE_ACCOUNT_JSON` | — | Alternative: the service-account JSON **inline** (no file). |
 | `PORT` | `3001` | API port. |
+| `APP_URL` | `http://localhost:5173` | Public origin used to build password-reset links. |
+| `SMTP_HOST` | — | SMTP host for password-reset email. When unset, the reset link is logged instead of emailed. |
+| `SMTP_PORT` | `587` | SMTP port. |
+| `SMTP_SECURE` | `false` | `true` for TLS (port 465). |
+| `SMTP_USER` | — | SMTP username. |
+| `SMTP_PASS` | — | SMTP password. |
+| `SMTP_FROM` | `SMTP_USER` | From address for reset emails. |
 
 Client-side (build-time):
 
@@ -137,10 +146,11 @@ server/
   lib/db.ts           SQLite handle — PLATFORM-MANAGED, do not edit
   core/
     schema.ts         tables, migrations, settings, sample data
-    auth.ts           users, sessions, admin tokens, Pro expiry job
+    auth.ts           users, sessions, admin tokens, Partner expiry job
     signals.ts        ingestion, edit + change log, soft-delete, redaction
     distribution.ts   eligibility, queue, worker, FCM transport
     util.ts           JSON/HTTP helpers, hashing, rate limiting
+    email.ts          password-reset email (SMTP, optional)
   tests/
     api.test.ts       full API suite
     admin-signals.test.ts   add/edit/delete lifecycle suite
@@ -150,7 +160,7 @@ src/
   components/        Layout, SignalCard, TimezonePicker, ui
   lib/               api, store (app state), push, nativePush, useSignals, time, types, …
   pages/             Onboarding, Feed, SignalDetails, History, Calculator, Settings,
-                     Contact, Profile, Admin
+                     Contact, Profile, ResetPassword, Admin
 android/             Capacitor wrapper
 docs/                docs (this file, ARCHITECTURE, firebase keys)
 ```
@@ -164,7 +174,7 @@ docs/                docs (this file, ARCHITECTURE, firebase keys)
 3. `delivery_jobs` rebuilds when its shape/unique-key changes.
 
 Tables: `users`, `sessions`, `admin_tokens`, `devices`, `signals`,
-`signal_edits`, `delivery_jobs`, `webhook_events`, `settings`.
+`signal_edits`, `delivery_jobs`, `settings`.
 
 Key facts:
 
@@ -183,7 +193,7 @@ A delivery job has a `kind`:
 
 | kind | When | Audience |
 | --- | --- | --- |
-| `NEW` | signal created (webhook or admin) | every eligible device |
+| `NEW` | signal created (admin) | every eligible device |
 | `UPDATE` | signal edited | devices that already received it (SENT/DELIVERED) |
 | `DELETE` | signal deleted | devices that already received it |
 
@@ -192,18 +202,18 @@ distributed and hidden from users until published
 (`POST /api/admin/signals/:id/publish`). The admin UI has Publish / Save-as-draft
 buttons, a Publish action on draft rows, and confirmation dialogs on delete.
 
-Flow: webhook/admin persists the signal **first**, responds, then
+Flow: the admin route persists the signal **first**, responds, then
 `setImmediate → enqueueSignalDistribution()` creates one `delivery_jobs` row per
 eligible device. A background worker (every 3s) sends each via
 `transportSend()` — FCM when configured, otherwise marks `SENT` for the device
 to pull. Eligibility is decided by `evaluateEligibility()` and the skip reason
 is stored.
 
-`free_visible_count` (default 3) is the only free-tier gate: a free viewer sees
-the **first N open signals of the current day** in full; newer ones are
-blurred/locked. Free devices still get a push for every new signal, but when a
-signal is outside their visible window the push is a generic "New signal
-released" alert with no symbol/price. Pro users always get the full text.
+`free_visible_count` (default 3) is the only access gate for Members: a Member
+sees the **first N open signals of the current day** in full; newer ones are
+blurred/locked. Members still get a push for every new signal, but when a signal
+is outside their visible window the push is a generic "New signal released"
+alert with no symbol/price. Partners always get the full text.
 `UPDATE` and `DELETE` notices always carry full text (the device already holds
 the signal).
 
@@ -228,13 +238,13 @@ The feed does **not** wait for a manual reload:
   (before the worker finishes fanning out `NEW` jobs), the `UPDATE` audience
   (SENT/DELIVERED) may miss devices whose `NEW` job is still `PENDING`. Rare in
   practice; the automated test waits, so it is unaffected.
-- **Free visibility.** A free test device only reads the first
+- **Member visibility.** A Member test device only reads the first
   `free_visible_count` signals of the day; newer ones blur (and their push is
-  generic). Grant Pro to remove the limit while testing.
+  generic). Grant Partner to remove the limit while testing.
 
 ## 12. Not implemented (on purpose)
 
-- **In-app payments.** Upgrading is manual: staff flip the plan in the admin panel.
+- **Partner access.** Activating Partner status is manual: staff flip the tier in the admin panel.
 - **iOS wrapper.** Only Android is wrapped (Capacitor project exists, iOS not added).
 - **Other channels** (Telegram, e-mail). The transport is pluggable
   (`distribution.ts`) but only FCM + device pull exist.
@@ -243,13 +253,16 @@ The feed does **not** wait for a manual reload:
 
 ## 13. Recent changes (this session)
 
+- Removed the TradingView webhook (`POST /api/webhooks/tradingview`), its secret,
+  the `webhook_events` table, and all related docs. Signals are now created only
+  via the admin panel.
 - FCM service account wired on the dev server (`GOOGLE_APPLICATION_CREDENTIALS`).
 - Soft delete (`signals.deleted_at`) instead of hard delete.
 - `DELETE` delivery kind so deleting a signal notifies devices instantly.
 - `delivery_jobs` unique key now includes `kind` (schema migration).
 - Feed refreshes instantly on any notification (`signalTick`).
-- Free visibility is now "first N signals of the day" (not newest N).
-- Removed `free_push_per_day`; `free_visible_count` is the only free-tier gate.
+- Member visibility is now "first N signals of the day" (not newest N).
+- Removed `free_push_per_day`; `free_visible_count` is the only access gate.
 - Locked signals push a generic no-detail alert for NEW/UPDATE/DELETE.
 - Admin: draft/publish signals + confirmation dialogs on delete.
 - Admin: close-signal uses an in-app price dialog (no `window.prompt`).
@@ -257,6 +270,39 @@ The feed does **not** wait for a manual reload:
 - History paginates with a "Load more" button (page size 10).
 - Admin signal table: pagination + filters (status, action, time range).
 - New test suite `npm run test:admin` covering add/edit/delete.
+- Release build: R8 minify + resource shrink enabled (`proguard-android-optimize.txt`).
+- `android:allowBackup="false"` (auth/device tokens must not auto-restore).
+- Removed Capacitor template tests (wrong `com.getcapacitor.myapp` package).
+- `allowMixedContent` is now opt-in via `CAPACITOR_ALLOW_MIXED_CONTENT=true` (off in release).
+- Production guards: server refuses to boot on the default admin password.
+- Renamed the two tiers Free → Member and Pro → Partner; removed all payment/upgrade language from the UI.
+- Admin: delete a user from the Users tab (`DELETE /api/admin/users/:id`).
+- Forgot-password returns a `devResetUrl` in non-production so the reset flow is testable without SMTP.
+- Notifications collapsed to a single master switch (removed trading/BUY/SELL sub-preferences).
+- Account deletion: `DELETE /api/auth/me` + a confirmation flow in Profile.
+- Password reset: `forgot-password` / `reset-password` endpoints + email link (SMTP) + a `/reset-password` screen.
+- Privacy policy: added `docs/PRIVACY_POLICY.md` + a Settings → Privacy Policy link (configurable `privacy_policy_url`).
+- Announcement banner: admin can write/toggle an announcement (Admin → Settings); it shows at the top of the feed and each user can dismiss it locally.
+
+## 14. Before Google Play release — checklist
+
+Code fixes are done; these items need console/account access and are not yet done:
+
+- **Privacy policy — host it + Data Safety form.** The policy text is written
+  (`docs/PRIVACY_POLICY.md`) and the app links to it (Settings → Privacy Policy).
+  Remaining: host the policy at a public URL, set that URL in the Play Console
+  store listing, and fill out the Data Safety form.
+- **Account-deletion web path.** In-app deletion is implemented; Play also wants a
+  web URL where users can request deletion outside the app. Add that link in the
+  console.
+- **Financial-services policy review.** Trading-signal content may require a
+  financial-services declaration/review — confirm eligibility before submit.
+- **Restrict the Firebase Android API key.** `android/app/google-services.json`
+  ships in the APK; lock its API key to this app's package + SHA-1 in Google
+  Cloud Console so it cannot be abused elsewhere.
+- **Play App Signing + release keystore.** Create a release signing key and
+  enroll in Play App Signing; set the signing config in `build.gradle` (or use a
+  keystore properties file) so `:app:assembleRelease` produces a signed, uploadable AAB/APK.
 
 ---
 

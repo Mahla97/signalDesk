@@ -14,7 +14,7 @@ body,
 }
 
 body {
-  font-family: 'Vazirmatn', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  font-family: 'Roboto', system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif;
   color: #e6edf7;
   line-height: 1.65;
   -webkit-font-smoothing: antialiased;

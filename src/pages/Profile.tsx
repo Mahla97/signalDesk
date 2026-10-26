@@ -1,5 +1,4 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { Crown, LogOut, Mail, ShieldAlert, Timer, UserRound } from 'lucide-react';
 import { Badge, Button, Panel, SectionTitle } from '../components/ui';
 import { useStore } from '../lib/store';
@@ -7,19 +6,28 @@ import { ApiError } from '../lib/api';
 import { formatDateTime, formatDuration } from '../lib/time';
 
 function AuthForm(): React.ReactElement {
-  const { signIn, signUp } = useStore();
-  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const { signIn, signUp, requestPasswordReset } = useStore();
+  const [mode, setMode] = useState<'login' | 'signup' | 'forgot'>('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fieldError, setFieldError] = useState<{ email?: string; password?: string }>({});
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  function switchMode(next: 'login' | 'signup' | 'forgot'): void {
+    setMode(next);
+    setFieldError({});
+    setError(null);
+    setSent(false);
+    setPassword('');
+  }
 
   async function submit(e: FormEvent): Promise<void> {
     e.preventDefault();
     const errors: { email?: string; password?: string } = {};
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())) errors.email = 'Enter a valid email address.';
-    if (password.length < 8) errors.password = 'Password must be at least 8 characters.';
+    if (mode !== 'forgot' && password.length < 8) errors.password = 'Password must be at least 8 characters.';
     setFieldError(errors);
     if (Object.keys(errors).length > 0) return;
 
@@ -27,7 +35,11 @@ function AuthForm(): React.ReactElement {
     setError(null);
     try {
       if (mode === 'login') await signIn(email.trim(), password);
-      else await signUp(email.trim(), password);
+      else if (mode === 'signup') await signUp(email.trim(), password);
+      else {
+        await requestPasswordReset(email.trim());
+        setSent(true);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
     } finally {
@@ -43,7 +55,7 @@ function AuthForm(): React.ReactElement {
       <div className="mb-4 flex rounded-xl border border-[#243049] bg-[#0c1220] p-1">
         <button
           type="button"
-          onClick={() => setMode('login')}
+          onClick={() => switchMode('login')}
           data-testid="auth-tab-login"
           className={
             'min-h-10 flex-1 rounded-lg text-sm font-bold transition ' +
@@ -54,7 +66,7 @@ function AuthForm(): React.ReactElement {
         </button>
         <button
           type="button"
-          onClick={() => setMode('signup')}
+          onClick={() => switchMode('signup')}
           data-testid="auth-tab-signup"
           className={
             'min-h-10 flex-1 rounded-lg text-sm font-bold transition ' +
@@ -65,74 +77,116 @@ function AuthForm(): React.ReactElement {
         </button>
       </div>
 
-      <p className="mb-4 text-sm text-slate-400">
-        An account is required for Pro. Free browsing works without signing up.
-      </p>
+      {mode === 'forgot' ? (
+        <p className="mb-4 text-sm text-slate-400">
+          Enter the email you signed up with and we'll send you a reset link.
+        </p>
+      ) : (
+        <p className="mb-4 text-sm text-slate-400">
+          An account is required for Partner status. You can browse without signing up.
+        </p>
+      )}
 
-      <form onSubmit={submit} noValidate>
-        <label className="block">
-          <span className="mb-1 block text-sm font-bold text-slate-200">Email</span>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            autoComplete="email"
-            placeholder="you@example.com"
-            data-testid="auth-email"
-            className={inputClass + (fieldError.email ? ' border-rose-500/60' : ' border-[#243049]')}
-          />
-          {fieldError.email ? (
-            <span className="mt-1 block text-xs font-semibold text-rose-300" data-testid="auth-email-error">
-              {fieldError.email}
-            </span>
+      {sent ? (
+        <div
+          className="rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-2 text-sm font-semibold text-emerald-200"
+          data-testid="auth-reset-sent"
+        >
+          If an account exists for that email, a reset link is on its way.
+        </div>
+      ) : (
+        <form onSubmit={submit} noValidate>
+          <label className="block">
+            <span className="mb-1 block text-sm font-bold text-slate-200">Email</span>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              placeholder="you@example.com"
+              data-testid="auth-email"
+              className={inputClass + (fieldError.email ? ' border-rose-500/60' : ' border-[#243049]')}
+            />
+            {fieldError.email ? (
+              <span className="mt-1 block text-xs font-semibold text-rose-300" data-testid="auth-email-error">
+                {fieldError.email}
+              </span>
+            ) : null}
+          </label>
+
+          {mode !== 'forgot' ? (
+            <label className="mt-3 block">
+              <span className="mb-1 block text-sm font-bold text-slate-200">Password</span>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                placeholder="At least 8 characters"
+                data-testid="auth-password"
+                className={inputClass + (fieldError.password ? ' border-rose-500/60' : ' border-[#243049]')}
+              />
+              {fieldError.password ? (
+                <span className="mt-1 block text-xs font-semibold text-rose-300" data-testid="auth-password-error">
+                  {fieldError.password}
+                </span>
+              ) : null}
+            </label>
           ) : null}
-        </label>
 
-        <label className="mt-3 block">
-          <span className="mb-1 block text-sm font-bold text-slate-200">Password</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
-            placeholder="At least 8 characters"
-            data-testid="auth-password"
-            className={inputClass + (fieldError.password ? ' border-rose-500/60' : ' border-[#243049]')}
-          />
-          {fieldError.password ? (
-            <span className="mt-1 block text-xs font-semibold text-rose-300" data-testid="auth-password-error">
-              {fieldError.password}
-            </span>
+          {error ? (
+            <p
+              className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200"
+              data-testid="auth-error"
+            >
+              {error}
+            </p>
           ) : null}
-        </label>
 
-        {error ? (
-          <p
-            className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/10 px-3 py-2 text-sm font-semibold text-rose-200"
-            data-testid="auth-error"
-          >
-            {error}
-          </p>
-        ) : null}
+          <Button type="submit" className="mt-4 w-full" disabled={busy} testId="auth-submit">
+            {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Send reset link'}
+          </Button>
+        </form>
+      )}
 
-        <Button type="submit" className="mt-4 w-full" disabled={busy} testId="auth-submit">
-          {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
-        </Button>
-      </form>
+      {mode === 'login' ? (
+        <button
+          type="button"
+          onClick={() => switchMode('forgot')}
+          data-testid="auth-forgot"
+          className="mt-3 w-full text-sm font-semibold text-slate-500 hover:text-slate-300"
+        >
+          Forgot password?
+        </button>
+      ) : null}
     </Panel>
   );
 }
 
 export default function Profile(): React.ReactElement {
-  const { user, isPro, signOut, refreshUser, config } = useStore();
-  const [remaining, setRemaining] = useState(user?.proRemainingMs ?? 0);
+  const { user, isPartner, signOut, deleteAccount, refreshUser, config } = useStore();
+  const [remaining, setRemaining] = useState(user?.partnerRemainingMs ?? 0);
+  const [showDelete, setShowDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  async function confirmDelete(): Promise<void> {
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteAccount();
+    } catch (err) {
+      setDeleteError(err instanceof ApiError ? err.message : 'Could not delete your account. Please try again.');
+      setDeleting(false);
+    }
+  }
 
   useEffect(() => {
-    setRemaining(user?.proRemainingMs ?? 0);
+    setRemaining(user?.partnerRemainingMs ?? 0);
   }, [user]);
 
   useEffect(() => {
-    if (!user || user.proRemainingMs <= 0) return;
+    if (!user || user.partnerRemainingMs <= 0) return;
     const timer = window.setInterval(() => {
       setRemaining((current) => Math.max(0, current - 60000));
     }, 60000);
@@ -146,15 +200,15 @@ export default function Profile(): React.ReactElement {
   if (!user) {
     return (
       <div className="space-y-5">
-        <SectionTitle title="Account" subtitle="Sign in to manage your Pro membership" />
+        <SectionTitle title="Account" subtitle="Sign in to manage your Partner status" />
         <AuthForm />
         <Panel className="p-5">
           <h3 className="text-sm font-bold text-slate-100">Why create an account?</h3>
           <ul className="mt-2 space-y-1.5 text-sm text-slate-400">
-            <li>• Pro membership is linked to your email address.</li>
-            <li>• Your plan follows you to any device you sign in on.</li>
+            <li>• Partner status is linked to your email address.</li>
+            <li>• Your Partner status follows you to any device you sign in on.</li>
             <li>
-              • Free browsing keeps working without an account — the first {config.freeVisibleCount} signals of the
+              • You can keep browsing without an account — the first {config.memberVisibleCount} signals of the
               day are unlocked.
             </li>
           </ul>
@@ -165,7 +219,7 @@ export default function Profile(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Account" subtitle="Your plan and membership status" />
+      <SectionTitle title="Account" subtitle="Your Partner status" />
 
       <Panel className="p-5" testId="profile-panel">
         <div className="flex items-center gap-3">
@@ -179,8 +233,8 @@ export default function Profile(): React.ReactElement {
             </p>
             <p className="text-xs text-slate-500">Member since {formatDateTime(user.createdAt, user.timezone ?? 'UTC')}</p>
           </div>
-          <Badge tone={isPro ? 'pro' : 'neutral'} className="ms-auto">
-            {isPro ? 'PRO' : 'FREE'}
+          <Badge tone={isPartner ? 'partner' : 'neutral'} className="ms-auto">
+            {isPartner ? 'PARTNER' : 'MEMBER'}
           </Badge>
         </div>
 
@@ -194,29 +248,29 @@ export default function Profile(): React.ReactElement {
           </p>
         ) : null}
 
-        {isPro ? (
-          <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/5 p-4" data-testid="profile-pro">
+        {isPartner ? (
+          <div className="mt-4 rounded-xl border border-sky-500/25 bg-sky-500/5 p-4" data-testid="profile-partner">
             <p className="flex items-center gap-2 text-sm font-bold text-sky-200">
               <Crown className="h-4 w-4" aria-hidden="true" />
-              Pro membership active
+              Partner status active
             </p>
             <p className="mt-2 flex items-center gap-2 text-sm text-slate-300">
               <Timer className="h-4 w-4 text-slate-500" aria-hidden="true" />
               Remaining: <span className="font-mono font-bold text-slate-100">{formatDuration(remaining)}</span>
             </p>
             <p className="mt-1 text-xs text-slate-500">
-              Expires {formatDateTime(user.proEndAt, user.timezone ?? 'UTC')}
+              Expires {formatDateTime(user.partnerEndAt, user.timezone ?? 'UTC')}
             </p>
           </div>
         ) : (
-          <div className="mt-4 rounded-xl border border-[#243049] bg-[#0c1220] p-4" data-testid="profile-free">
-            <p className="text-sm font-bold text-slate-100">You are on the Free plan</p>
+          <div className="mt-4 rounded-xl border border-[#243049] bg-[#0c1220] p-4" data-testid="profile-member">
+            <p className="text-sm font-bold text-slate-100">You are a Member</p>
             <p className="mt-1 text-sm text-slate-400">
-              Pro members receive every signal in real time. Our team activates Pro manually.
+              Partners receive every signal in real time. Our team activates Partner status manually.
             </p>
-            <Link to="/contact" className="mt-3 inline-block">
-              <Button testId="profile-upgrade">Contact us to go Pro</Button>
-            </Link>
+            <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-3 inline-block">
+              <Button testId="profile-join">Join Our Team</Button>
+            </a>
           </div>
         )}
 
@@ -224,6 +278,45 @@ export default function Profile(): React.ReactElement {
           <LogOut className="h-4 w-4" aria-hidden="true" />
           Sign out
         </Button>
+
+        {showDelete ? (
+          <div className="mt-3 rounded-xl border border-rose-500/25 bg-rose-500/5 p-4" data-testid="profile-delete-confirm">
+            <p className="text-sm font-bold text-rose-200">Delete your account?</p>
+            <p className="mt-1 text-xs text-slate-400">
+              This permanently removes your account, your Partner status and your sign-in. This cannot be undone.
+            </p>
+            {deleteError ? (
+              <p className="mt-2 text-xs font-semibold text-rose-300">{deleteError}</p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button
+                variant="danger"
+                onClick={() => void confirmDelete()}
+                disabled={deleting}
+                testId="profile-delete-confirm-btn"
+              >
+                {deleting ? 'Deleting…' : 'Delete my account'}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setShowDelete(false)}
+                disabled={deleting}
+                testId="profile-delete-cancel"
+              >
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <button
+            type="button"
+            onClick={() => setShowDelete(true)}
+            data-testid="profile-delete"
+            className="mt-3 w-full text-center text-sm font-semibold text-rose-400/80 hover:text-rose-300"
+          >
+            Delete account
+          </button>
+        )}
       </Panel>
     </div>
   );

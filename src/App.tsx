@@ -16,6 +16,7 @@ import Calculator from './pages/Calculator';
 import Settings from './pages/Settings';
 import Contact from './pages/Contact';
 import Profile from './pages/Profile';
+import ResetPassword from './pages/ResetPassword';
 import Admin from './pages/Admin';
 import { StoreProvider, useStore } from './lib/store';
 import { addNotificationTapListener } from './lib/nativePush';
@@ -61,6 +62,11 @@ function Shell(): React.ReactElement {
   const { onboarded } = useStore();
   const location = useLocation();
   const isAdminRoute = location.pathname.startsWith('/admin');
+  const isResetRoute = location.pathname.startsWith('/reset-password');
+
+  if (isResetRoute) {
+    return <ResetPassword />;
+  }
 
   if (!onboarded && !isAdminRoute) {
     return <Onboarding />;

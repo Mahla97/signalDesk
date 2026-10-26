@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Activity, BellRing, CheckCircle2, Clock } from 'lucide-react';
+import { BellRing, CheckCircle2, Clock } from 'lucide-react';
 import TimezonePicker from '../components/TimezonePicker';
 import { Button, Disclaimer, Panel } from '../components/ui';
 import { useStore } from '../lib/store';
@@ -14,14 +14,9 @@ export default function Onboarding(): React.ReactElement {
   return (
     <div className="min-h-screen bg-[#0a0e17] px-4 py-8 sm:px-6">
       <div className="mx-auto w-full max-w-xl">
-        <div className="mb-6 flex items-center gap-3">
-          <span className="grid h-11 w-11 place-items-center rounded-2xl bg-sky-500/15 text-sky-300">
-            <Activity className="h-6 w-6" aria-hidden="true" />
-          </span>
-          <div>
-            <h1 className="text-xl font-extrabold tracking-tight text-slate-50">SignalDesk</h1>
-            <p className="text-sm text-slate-400">Crypto &amp; forex trading signals, delivered fast.</p>
-          </div>
+        <div className="mb-6">
+          <img src="/logo.svg" alt="SignalDesk" className="h-16 w-auto" />
+          <p className="mt-2 text-sm text-slate-400">Crypto &amp; forex trading signals, delivered fast.</p>
         </div>
 
         {step === 0 ? (

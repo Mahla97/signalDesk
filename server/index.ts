@@ -10,24 +10,28 @@ import {
   adminLogin,
   adminLogout,
   bearer,
+  createPasswordReset,
   createUser,
   currentUser,
-  expireProSubscriptions,
+  deleteUser,
+  expirePartnerAccess,
   findUserByEmail,
   isAdmin,
-  isProActive,
+  isPartnerActive,
   login,
   logout,
   publicUser,
+  resetPasswordWithToken,
   touchUser,
   type UserRow,
 } from './core/auth.js';
+import { sendPasswordResetEmail } from './core/email.js';
 import {
   closeSignalById,
   deleteSampleSignals,
   deleteSignal,
   getSignalById,
-  ingestWebhookPayload,
+  ingestSignalPayload,
   listSignalChanges,
   listSignals,
   performanceStats,
@@ -54,26 +58,30 @@ import {
   randomToken,
   rateLimit,
   readJson,
-  safeEqual,
   sendJson,
   toNumber,
   toStr,
 } from './core/util.js';
 
+// Load a local .env file when present (gitignored). Host env vars always win.
+try {
+  process.loadEnvFile();
+} catch {
+  /* no .env file — environment comes from the host */
+}
+
 initDatabase();
 startWorker();
 
-// Scheduled job: expire PRO subscriptions once a minute.
-expireProSubscriptions();
+// Scheduled job: expire PARTNER access once a minute.
+expirePartnerAccess();
 setInterval(() => {
   try {
-    expireProSubscriptions();
+    expirePartnerAccess();
   } catch (err) {
     console.error('[cron] expiry job failed', err);
   }
 }, 60_000);
-
-const WEBHOOK_SECRET = process.env.TRADINGVIEW_WEBHOOK_SECRET || 'change-me-tradingview-secret';
 
 /* ------------------------------- helpers --------------------------------- */
 
@@ -84,10 +92,10 @@ function getDevice(req: IncomingMessage): DeviceRow | null {
   return row ?? null;
 }
 
-function viewerIsPro(req: IncomingMessage): { user: UserRow | null; isPro: boolean } {
+function viewerIsPartner(req: IncomingMessage): { user: UserRow | null; isPartner: boolean } {
   const user = currentUser(req);
   if (user) touchUser(user.id);
-  return { user, isPro: isProActive(user) };
+  return { user, isPartner: isPartnerActive(user) };
 }
 
 function requireAdmin(req: IncomingMessage, res: ServerResponse): boolean {
@@ -96,12 +104,6 @@ function requireAdmin(req: IncomingMessage, res: ServerResponse): boolean {
     return false;
   }
   return true;
-}
-
-function logWebhook(externalId: string | null, outcome: string, message: string): void {
-  db.prepare(
-    'INSERT INTO webhook_events (external_signal_id, outcome, message, created_at) VALUES (?, ?, ?, ?)',
-  ).run(externalId, outcome, message, nowIso());
 }
 
 /* -------------------------------- routes ---------------------------------- */
@@ -116,7 +118,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET,POST,PATCH,DELETE,OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-device-token,x-admin-token,x-webhook-secret',
+      'Access-Control-Allow-Headers': 'Content-Type,Authorization,x-device-token,x-admin-token',
     });
     res.end();
     return;
@@ -136,64 +138,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       websiteUrl: s.website_url,
       instagramUrl: s.instagram_url,
       supportEmail: s.support_email,
-      freeVisibleCount: Number(s.free_visible_count),
+      privacyPolicyUrl: s.privacy_policy_url,
+      announcementEnabled: s.announcement_enabled === '1',
+      announcementText: s.announcement_text,
+      memberVisibleCount: Number(s.member_visible_count),
       historyDays: Number(s.history_days),
       stats: performanceStats(),
-    });
-    return;
-  }
-
-  /* ---------------------------- TradingView -------------------------------- */
-
-  if (method === 'POST' && path === '/api/webhooks/tradingview') {
-    const ip = clientIp(req);
-    if (!rateLimit('webhook:' + ip, 60, 60_000)) {
-      logWebhook(null, 'RATE_LIMITED', 'too many requests from ' + ip);
-      sendJson(res, 429, { error: 'rate limited' });
-      return;
-    }
-
-    let payload: Record<string, unknown>;
-    try {
-      payload = await readJson(req);
-    } catch {
-      logWebhook(null, 'INVALID_PAYLOAD', 'body was not valid JSON');
-      sendJson(res, 400, { error: 'invalid json body' });
-      return;
-    }
-
-    const provided = header(req, 'x-webhook-secret') || String(payload.secret ?? '');
-    if (!safeEqual(provided, WEBHOOK_SECRET)) {
-      // never log the secret itself
-      logWebhook(null, 'INVALID_SECRET', 'rejected request from ' + ip);
-      sendJson(res, 401, { error: 'invalid secret' });
-      return;
-    }
-    delete payload.secret;
-
-    const result = ingestWebhookPayload(payload);
-    if (!result.ok) {
-      logWebhook(null, 'INVALID_PAYLOAD', result.error);
-      sendJson(res, 422, { error: result.error });
-      return;
-    }
-
-    if (!result.created) {
-      logWebhook(result.signal.external_signal_id, 'DUPLICATE', 'idempotent replay ignored');
-      sendJson(res, 200, { ok: true, duplicate: true, signalId: result.signal.id });
-      return;
-    }
-
-    logWebhook(result.signal.external_signal_id, 'ACCEPTED', `${result.signal.action} ${result.signal.symbol}`);
-    // Respond immediately; distribution happens outside the request.
-    sendJson(res, 202, { ok: true, duplicate: false, signalId: result.signal.id });
-
-    setImmediate(() => {
-      try {
-        enqueueSignalDistribution(result.signal.id);
-      } catch (err) {
-        console.error('[webhook] distribution failed for signal', result.signal.id, err);
-      }
     });
     return;
   }
@@ -231,7 +181,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       db.prepare(
         `UPDATE devices SET user_id = ?, platform = ?, timezone = ?, disabled = 0, last_seen_at = ?,
            push_token = COALESCE(?, push_token),
-           notifications_enabled = ?, trading_signals_enabled = ?, buy_signals_enabled = ?, sell_signals_enabled = ?
+           notifications_enabled = ?
          WHERE id = ?`,
       ).run(
         user ? user.id : existing.user_id,
@@ -239,28 +189,21 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
         timezone ?? existing.timezone,
         now,
         pushToken,
-        bool(prefs.tradingNotificationsEnabled ?? prefs.notificationsEnabled, existing.notifications_enabled),
-        bool(prefs.tradingSignalsEnabled, existing.trading_signals_enabled),
-        bool(prefs.buySignalsEnabled, existing.buy_signals_enabled),
-        bool(prefs.sellSignalsEnabled, existing.sell_signals_enabled),
+        bool(prefs.notificationsEnabled, existing.notifications_enabled),
         existing.id,
       );
     } else {
       db.prepare(
         `INSERT INTO devices
-           (token, push_token, user_id, platform, timezone, notifications_enabled, trading_signals_enabled,
-            buy_signals_enabled, sell_signals_enabled, created_at, last_seen_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           (token, push_token, user_id, platform, timezone, notifications_enabled, created_at, last_seen_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       ).run(
         token,
         pushToken,
         user ? user.id : null,
         platform,
         timezone,
-        bool(prefs.tradingNotificationsEnabled ?? prefs.notificationsEnabled),
-        bool(prefs.tradingSignalsEnabled),
-        bool(prefs.buySignalsEnabled),
-        bool(prefs.sellSignalsEnabled),
+        bool(prefs.notificationsEnabled),
         now,
         now,
       );
@@ -272,9 +215,6 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       token: device.token,
       preferences: {
         notificationsEnabled: Boolean(device.notifications_enabled),
-        tradingSignalsEnabled: Boolean(device.trading_signals_enabled),
-        buySignalsEnabled: Boolean(device.buy_signals_enabled),
-        sellSignalsEnabled: Boolean(device.sell_signals_enabled),
       },
     });
     return;
@@ -345,7 +285,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   /* -------------------------------- signals -------------------------------- */
 
   if (method === 'GET' && path === '/api/signals') {
-    const { isPro } = viewerIsPro(req);
+    const { isPartner } = viewerIsPartner(req);
     const statusParam = (url.searchParams.get('status') ?? 'open').toLowerCase();
     const status = statusParam === 'closed' || statusParam === 'all' ? statusParam : 'open';
     const data = listSignals({
@@ -353,15 +293,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       market: url.searchParams.get('market'),
       page: Number(url.searchParams.get('page') ?? '1') || 1,
       pageSize: Number(url.searchParams.get('pageSize') ?? '15') || 15,
-      isPro,
+      isPartner,
     });
-    sendJson(res, 200, { ...data, isPro });
+    sendJson(res, 200, { ...data, isPartner });
     return;
   }
 
   params = match('/api/signals/:id', path);
   if (method === 'GET' && params) {
-    const { isPro } = viewerIsPro(req);
+    const { isPartner } = viewerIsPartner(req);
     const id = Number(params.id);
     if (!Number.isFinite(id)) {
       sendJson(res, 400, { error: 'invalid id' });
@@ -372,9 +312,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       sendJson(res, 404, { error: 'signal not found' });
       return;
     }
-    const view = publicSignal(row, isPro);
+    const view = publicSignal(row, isPartner);
     if (view.locked) {
-      sendJson(res, 403, { error: 'pro_required', locked: true, signal: view });
+      sendJson(res, 403, { error: 'partner_required', locked: true, signal: view });
       return;
     }
     view.changes = listSignalChanges(id);
@@ -455,6 +395,82 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       db.prepare('UPDATE devices SET user_id = ? WHERE token = ?').run(session.user.id, deviceToken);
     }
     sendJson(res, 200, { token: session.token, user: publicUser(session.user) });
+    return;
+  }
+
+  if (method === 'POST' && path === '/api/auth/forgot-password') {
+    const ip = clientIp(req);
+    if (!rateLimit('forgot:' + ip, 5, 15 * 60_000)) {
+      sendJson(res, 429, { error: 'too many attempts, please try again later' });
+      return;
+    }
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(req);
+    } catch {
+      sendJson(res, 400, { error: 'invalid json body' });
+      return;
+    }
+    const email = (toStr(body.email, 120) ?? '').toLowerCase();
+    if (!isEmail(email)) {
+      sendJson(res, 422, { error: 'Please enter a valid email address.' });
+      return;
+    }
+    const user = findUserByEmail(email);
+    if (user) {
+      const token = createPasswordReset(user.id);
+      const base = (process.env.APP_URL ?? 'http://localhost:5173').replace(/\/+$/, '');
+      const resetUrl = `${base}/reset-password?token=${token}`;
+      try {
+        await sendPasswordResetEmail(email, resetUrl);
+      } catch (err) {
+        console.error('[auth] password reset email failed', err);
+      }
+      if (process.env.NODE_ENV !== 'production') {
+        // Dev convenience: expose the reset link so the flow works without SMTP.
+        sendJson(res, 200, { ok: true, devResetUrl: resetUrl });
+        return;
+      }
+    }
+    // Always the same response so we don't reveal which emails have accounts.
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === 'POST' && path === '/api/auth/reset-password') {
+    let body: Record<string, unknown>;
+    try {
+      body = await readJson(req);
+    } catch {
+      sendJson(res, 400, { error: 'invalid json body' });
+      return;
+    }
+    const token = toStr(body.token, 200) ?? '';
+    const password = toStr(body.password, 200) ?? '';
+    if (!token) {
+      sendJson(res, 422, { error: 'This reset link is invalid.' });
+      return;
+    }
+    if (password.length < 8) {
+      sendJson(res, 422, { error: 'Password must be at least 8 characters.' });
+      return;
+    }
+    if (!resetPasswordWithToken(token, password)) {
+      sendJson(res, 400, { error: 'This reset link is invalid or has expired.' });
+      return;
+    }
+    sendJson(res, 200, { ok: true });
+    return;
+  }
+
+  if (method === 'DELETE' && path === '/api/auth/me') {
+    const user = currentUser(req);
+    if (!user) {
+      sendJson(res, 401, { error: 'unauthorized' });
+      return;
+    }
+    deleteUser(user.id);
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -540,8 +556,8 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   if (method === 'GET' && path === '/api/admin/overview') {
     if (!requireAdmin(req, res)) return;
     const users = db.prepare('SELECT COUNT(*) AS c FROM users').get() as { c: number };
-    const pro = db
-      .prepare("SELECT COUNT(*) AS c FROM users WHERE plan = 'PRO' AND pro_end_at > ?")
+    const partner = db
+      .prepare("SELECT COUNT(*) AS c FROM users WHERE plan = 'PARTNER' AND partner_end_at > ?")
       .get(nowIso()) as { c: number };
     const devices = db.prepare('SELECT COUNT(*) AS c FROM devices WHERE disabled = 0').get() as { c: number };
     const signals = db.prepare('SELECT COUNT(*) AS c FROM signals').get() as { c: number };
@@ -554,14 +570,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const edited = db.prepare('SELECT COUNT(*) AS c FROM signals WHERE edit_count > 0').get() as { c: number };
     sendJson(res, 200, {
       users: users.c,
-      proUsers: pro.c,
+      partnerUsers: partner.c,
       devices: devices.c,
       signals: signals.c,
       pushSent: sent.c,
       pushFailed: failed.c,
       editedSignals: edited.c,
       performance: performanceStats(),
-      webhookSecretConfigured: Boolean(process.env.TRADINGVIEW_WEBHOOK_SECRET),
     });
     return;
   }
@@ -589,13 +604,13 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     const id = Number(params.id);
-    const plan = (toStr(body.plan, 10) ?? 'FREE').toUpperCase();
+    const plan = (toStr(body.plan, 10) ?? 'MEMBER').toUpperCase();
     const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
     if (!user) {
       sendJson(res, 404, { error: 'user not found' });
       return;
     }
-    if (plan === 'PRO') {
+    if (plan === 'PARTNER') {
       const days = toNumber(body.days) ?? 30;
       if (days <= 0 || days > 3650) {
         sendJson(res, 422, { error: 'days must be between 1 and 3650' });
@@ -604,14 +619,14 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       const start = nowIso();
       const end = new Date(Date.now() + days * 86400000).toISOString();
       db.prepare(
-        "UPDATE users SET plan = 'PRO', subscription_status = 'ACTIVE', pro_start_at = ?, pro_end_at = ? WHERE id = ?",
+        "UPDATE users SET plan = 'PARTNER', partner_status = 'ACTIVE', partner_start_at = ?, partner_end_at = ? WHERE id = ?",
       ).run(start, end, id);
-      console.log(`[admin] user ${user.email} upgraded to PRO for ${days} day(s)`);
+      console.log(`[admin] user ${user.email} upgraded to PARTNER for ${days} day(s)`);
     } else {
       db.prepare(
-        "UPDATE users SET plan = 'FREE', subscription_status = 'INACTIVE', pro_end_at = ? WHERE id = ?",
+        "UPDATE users SET plan = 'MEMBER', partner_status = 'INACTIVE', partner_end_at = ? WHERE id = ?",
       ).run(nowIso(), id);
-      console.log(`[admin] user ${user.email} moved back to FREE`);
+      console.log(`[admin] user ${user.email} moved back to MEMBER`);
     }
     const updated = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow;
     sendJson(res, 200, { user: publicUser(updated) });
@@ -637,6 +652,20 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     sendJson(res, 200, { user: publicUser(updated) });
+    return;
+  }
+
+  params = match('/api/admin/users/:id', path);
+  if (method === 'DELETE' && params) {
+    if (!requireAdmin(req, res)) return;
+    const id = Number(params.id);
+    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id) as UserRow | undefined;
+    if (!user) {
+      sendJson(res, 404, { error: 'user not found' });
+      return;
+    }
+    deleteUser(id);
+    sendJson(res, 200, { ok: true });
     return;
   }
 
@@ -669,7 +698,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       timeTo,
       page,
       pageSize: 25,
-      isPro: true,
+      isPartner: true,
     });
     sendJson(res, 200, data);
     return;
@@ -686,7 +715,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     const isDraft = Boolean(body.draft);
     const payload = { ...body, id: toStr(body.id, 120) ?? 'manual-' + randomToken(8) };
-    const result = ingestWebhookPayload(payload);
+    const result = ingestSignalPayload(payload);
     if (!result.ok) {
       sendJson(res, 422, { error: result.error });
       return;
@@ -856,10 +885,7 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
          ORDER BY j.id DESC LIMIT 100`,
       )
       .all();
-    const hooks = db
-      .prepare('SELECT * FROM webhook_events ORDER BY id DESC LIMIT 50')
-      .all();
-    sendJson(res, 200, { deliveries: jobs, webhookEvents: hooks });
+    sendJson(res, 200, { deliveries: jobs });
     return;
   }
 
@@ -881,12 +907,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       return;
     }
     const allowed = [
-      'free_visible_count',
+      'member_visible_count',
       'history_days',
       'telegram_url',
       'website_url',
       'instagram_url',
       'support_email',
+      'privacy_policy_url',
+      'announcement_enabled',
+      'announcement_text',
     ];
     for (const key of allowed) {
       if (body[key] !== undefined) setSetting(key, String(body[key]).slice(0, 300));
@@ -911,6 +940,5 @@ const server = createServer((req, res) => {
 const port = Number(process.env.PORT ?? 3001);
 server.listen(port, () => {
   console.log(`[server] SignalDesk API listening on ${port}`);
-  console.log(`[server] webhook secret ${process.env.TRADINGVIEW_WEBHOOK_SECRET ? 'loaded from env' : 'using built-in default — set TRADINGVIEW_WEBHOOK_SECRET'}`);
   console.log(`[server] admin user: ${getSetting('admin_username')}`);
 });

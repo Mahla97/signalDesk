@@ -42,17 +42,17 @@ export type SignalPage = {
   pageSize: number;
   total: number;
   hasMore: boolean;
-  isPro: boolean;
+  isPartner: boolean;
 };
 
 export type AppUser = {
   id: number;
   email: string;
-  plan: 'FREE' | 'PRO';
-  subscriptionStatus: string;
-  proStartAt: string | null;
-  proEndAt: string | null;
-  proRemainingMs: number;
+  plan: 'MEMBER' | 'PARTNER';
+  partnerStatus: string;
+  partnerStartAt: string | null;
+  partnerEndAt: string | null;
+  partnerRemainingMs: number;
   suspended: boolean;
   timezone: string | null;
   createdAt: string;
@@ -64,16 +64,16 @@ export type AppConfig = {
   websiteUrl: string;
   instagramUrl: string;
   supportEmail: string;
-  freeVisibleCount: number;
+  privacyPolicyUrl: string;
+  announcementEnabled: boolean;
+  announcementText: string;
+  memberVisibleCount: number;
   historyDays: number;
   stats: { total: number; wins: number; losses: number; winRate: number };
 };
 
 export type NotificationPreferences = {
   notificationsEnabled: boolean;
-  tradingSignalsEnabled: boolean;
-  buySignalsEnabled: boolean;
-  sellSignalsEnabled: boolean;
 };
 
 export type PendingNotification = {
@@ -104,12 +104,4 @@ export type DeliveryLog = {
   delivered_at: string | null;
   symbol: string | null;
   action: string | null;
-};
-
-export type WebhookEvent = {
-  id: number;
-  external_signal_id: string | null;
-  outcome: string;
-  message: string | null;
-  created_at: string;
 };

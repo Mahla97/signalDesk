@@ -49,14 +49,14 @@ export function Badge({
   className = '',
 }: {
   children: ReactNode;
-  tone?: 'buy' | 'sell' | 'close' | 'pro' | 'neutral' | 'warn';
+  tone?: 'buy' | 'sell' | 'close' | 'partner' | 'neutral' | 'warn';
   className?: string;
 }): React.ReactElement {
   const tones: Record<string, string> = {
     buy: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
     sell: 'bg-rose-500/15 text-rose-300 border-rose-500/30',
     close: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-    pro: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
+    partner: 'bg-sky-500/15 text-sky-300 border-sky-500/30',
     warn: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
     neutral: 'bg-white/5 text-slate-300 border-white/10',
   };

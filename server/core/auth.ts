@@ -1,15 +1,15 @@
 import type { IncomingMessage } from 'node:http';
 import { db } from '../lib/db.js';
-import { header, hashPassword, nowIso, randomToken, verifyPassword } from './util.js';
+import { header, hashPassword, isoPlusMs, nowIso, randomToken, sha1, verifyPassword } from './util.js';
 
 export type UserRow = {
   id: number;
   email: string;
   password_hash: string;
   plan: string;
-  subscription_status: string;
-  pro_start_at: string | null;
-  pro_end_at: string | null;
+  partner_status: string;
+  partner_start_at: string | null;
+  partner_end_at: string | null;
   suspended: number;
   timezone: string | null;
   created_at: string;
@@ -19,35 +19,35 @@ export type UserRow = {
 export type PublicUser = {
   id: number;
   email: string;
-  plan: 'FREE' | 'PRO';
-  subscriptionStatus: string;
-  proStartAt: string | null;
-  proEndAt: string | null;
-  proRemainingMs: number;
+  plan: 'MEMBER' | 'PARTNER';
+  partnerStatus: string;
+  partnerStartAt: string | null;
+  partnerEndAt: string | null;
+  partnerRemainingMs: number;
   suspended: boolean;
   timezone: string | null;
   createdAt: string;
   lastSeenAt: string | null;
 };
 
-export function isProActive(user: UserRow | null | undefined): boolean {
+export function isPartnerActive(user: UserRow | null | undefined): boolean {
   if (!user) return false;
   if (user.suspended) return false;
-  if (user.plan !== 'PRO') return false;
-  if (!user.pro_end_at) return false;
-  return new Date(user.pro_end_at).getTime() > Date.now();
+  if (user.plan !== 'PARTNER') return false;
+  if (!user.partner_end_at) return false;
+  return new Date(user.partner_end_at).getTime() > Date.now();
 }
 
 export function publicUser(user: UserRow): PublicUser {
-  const remaining = user.pro_end_at ? new Date(user.pro_end_at).getTime() - Date.now() : 0;
+  const remaining = user.partner_end_at ? new Date(user.partner_end_at).getTime() - Date.now() : 0;
   return {
     id: user.id,
     email: user.email,
-    plan: isProActive(user) ? 'PRO' : 'FREE',
-    subscriptionStatus: user.subscription_status,
-    proStartAt: user.pro_start_at,
-    proEndAt: user.pro_end_at,
-    proRemainingMs: Math.max(0, remaining),
+    plan: isPartnerActive(user) ? 'PARTNER' : 'MEMBER',
+    partnerStatus: user.partner_status,
+    partnerStartAt: user.partner_start_at,
+    partnerEndAt: user.partner_end_at,
+    partnerRemainingMs: Math.max(0, remaining),
     suspended: Boolean(user.suspended),
     timezone: user.timezone,
     createdAt: user.created_at,
@@ -64,8 +64,8 @@ export function findUserByEmail(email: string): UserRow | undefined {
 export function createUser(email: string, password: string, timezone: string | null): UserRow {
   const now = nowIso();
   db.prepare(
-    'INSERT INTO users (email, password_hash, plan, subscription_status, timezone, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-  ).run(email.toLowerCase(), hashPassword(password), 'FREE', 'INACTIVE', timezone, now, now);
+    'INSERT INTO users (email, password_hash, plan, partner_status, timezone, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+  ).run(email.toLowerCase(), hashPassword(password), 'MEMBER', 'INACTIVE', timezone, now, now);
   return findUserByEmail(email) as UserRow;
 }
 
@@ -89,6 +89,41 @@ export function logout(token: string): void {
 
 export function touchUser(userId: number): void {
   db.prepare('UPDATE users SET last_seen_at = ? WHERE id = ?').run(nowIso(), userId);
+}
+
+/* ------------------------------ password reset ----------------------------- */
+
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
+
+/** Creates a single-use reset token and returns the raw value to email out. */
+export function createPasswordReset(userId: number): string {
+  const token = randomToken(32);
+  db.prepare(
+    'INSERT INTO password_resets (token_hash, user_id, expires_at, created_at) VALUES (?, ?, ?, ?)',
+  ).run(sha1(token), userId, isoPlusMs(RESET_TOKEN_TTL_MS), nowIso());
+  return token;
+}
+
+/** Consumes a reset token and sets the new password. Returns false when invalid/expired. */
+export function resetPasswordWithToken(token: string, password: string): boolean {
+  const hash = sha1(token);
+  const row = db
+    .prepare('SELECT user_id, expires_at FROM password_resets WHERE token_hash = ?')
+    .get(hash) as { user_id: number; expires_at: string } | undefined;
+  if (!row) return false;
+  if (new Date(row.expires_at).getTime() <= Date.now()) {
+    db.prepare('DELETE FROM password_resets WHERE token_hash = ?').run(hash);
+    return false;
+  }
+  db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), row.user_id);
+  db.prepare('DELETE FROM password_resets WHERE token_hash = ?').run(hash);
+  // Invalidate every session so anyone holding the old password is signed out.
+  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  return true;
+}
+
+export function deleteUser(userId: number): void {
+  db.prepare('DELETE FROM users WHERE id = ?').run(userId);
 }
 
 export function bearer(req: IncomingMessage): string {
@@ -137,15 +172,15 @@ export function adminLogout(req: IncomingMessage): void {
   if (token) db.prepare('DELETE FROM admin_tokens WHERE token = ?').run(token);
 }
 
-/** Scheduled job: any PRO whose window has passed falls back to FREE. */
-export function expireProSubscriptions(): number {
+/** Scheduled job: any PARTNER whose window has passed falls back to MEMBER. */
+export function expirePartnerAccess(): number {
   const res = db
     .prepare(
-      `UPDATE users SET plan = 'FREE', subscription_status = 'EXPIRED'
-       WHERE plan = 'PRO' AND pro_end_at IS NOT NULL AND pro_end_at <= ?`,
+      `UPDATE users SET plan = 'MEMBER', partner_status = 'EXPIRED'
+       WHERE plan = 'PARTNER' AND partner_end_at IS NOT NULL AND partner_end_at <= ?`,
     )
     .run(nowIso());
   const changed = Number(res.changes ?? 0);
-  if (changed > 0) console.log(`[cron] downgraded ${changed} expired PRO user(s)`);
+  if (changed > 0) console.log(`[cron] downgraded ${changed} expired PARTNER user(s)`);
   return changed;
 }

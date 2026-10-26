@@ -36,10 +36,10 @@ CREATE TABLE IF NOT EXISTS users (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  plan TEXT NOT NULL DEFAULT 'FREE',
-  subscription_status TEXT NOT NULL DEFAULT 'INACTIVE',
-  pro_start_at TEXT,
-  pro_end_at TEXT,
+  plan TEXT NOT NULL DEFAULT 'MEMBER',
+  partner_status TEXT NOT NULL DEFAULT 'INACTIVE',
+  partner_start_at TEXT,
+  partner_end_at TEXT,
   suspended INTEGER NOT NULL DEFAULT 0,
   timezone TEXT,
   created_at TEXT NOT NULL,
@@ -49,6 +49,14 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS password_resets (
+  token_hash TEXT PRIMARY KEY,
+  user_id INTEGER NOT NULL,
+  expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
@@ -65,9 +73,6 @@ CREATE TABLE IF NOT EXISTS devices (
   user_id INTEGER,
   platform TEXT NOT NULL DEFAULT 'android',
   notifications_enabled INTEGER NOT NULL DEFAULT 1,
-  trading_signals_enabled INTEGER NOT NULL DEFAULT 1,
-  buy_signals_enabled INTEGER NOT NULL DEFAULT 1,
-  sell_signals_enabled INTEGER NOT NULL DEFAULT 1,
   disabled INTEGER NOT NULL DEFAULT 0,
   timezone TEXT,
   created_at TEXT NOT NULL,
@@ -123,16 +128,6 @@ CREATE INDEX IF NOT EXISTS idx_signal_edits_signal ON signal_edits(signal_id, re
 ` +
   DELIVERY_JOBS_SQL +
   `
-CREATE TABLE IF NOT EXISTS webhook_events (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  external_signal_id TEXT,
-  outcome TEXT NOT NULL,
-  message TEXT,
-  created_at TEXT NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_webhook_events_created ON webhook_events(created_at DESC);
-
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
@@ -140,12 +135,15 @@ CREATE TABLE IF NOT EXISTS settings (
 `;
 
 export const DEFAULT_SETTINGS: Record<string, string> = {
-  free_visible_count: '3',
+  member_visible_count: '3',
   history_days: '14',
-  telegram_url: 'https://t.me/signaldesk',
+  telegram_url: 'https://t.me/SignalDesk_com',
   website_url: 'https://signaldesk.example.com',
   instagram_url: 'https://instagram.com/signaldesk',
   support_email: 'support@signaldesk.example.com',
+  privacy_policy_url: 'https://signaldesk.example.com/privacy',
+  announcement_enabled: '0',
+  announcement_text: '',
 };
 
 export function getSetting(key: string): string {
@@ -271,6 +269,50 @@ function backfillTakeProfits(): void {
   }
 }
 
+/**
+ * Rename the old Free/Pro tier identifiers to the Member/Partner naming used
+ * today. Column renames are idempotent (skip when the new column exists) and
+ * the plan enum values are migrated in place.
+ */
+function migrateTierNames(): void {
+  const cols = tableColumns('users');
+  if (cols.length > 0) {
+    const renames: [string, string][] = [
+      ['pro_start_at', 'partner_start_at'],
+      ['pro_end_at', 'partner_end_at'],
+      ['subscription_status', 'partner_status'],
+    ];
+    for (const [from, to] of renames) {
+      if (cols.includes(from) && !cols.includes(to)) {
+        try {
+          db.exec(`ALTER TABLE users RENAME COLUMN ${from} TO ${to}`);
+          console.log(`[migrate] renamed users.${from} -> ${to}`);
+        } catch (err) {
+          console.error(`[migrate] failed to rename users.${from}`, err);
+        }
+      }
+    }
+  }
+  db.prepare("UPDATE users SET plan = 'MEMBER' WHERE plan = 'FREE'").run();
+  db.prepare("UPDATE users SET plan = 'PARTNER' WHERE plan = 'PRO'").run();
+  db.prepare("UPDATE settings SET key = 'member_visible_count' WHERE key = 'free_visible_count'").run();
+}
+
+/** Drop the sub-notification toggles replaced by the single master switch. */
+function migrateDeviceNotificationPrefs(): void {
+  const cols = tableColumns('devices');
+  for (const col of ['trading_signals_enabled', 'buy_signals_enabled', 'sell_signals_enabled']) {
+    if (cols.includes(col)) {
+      try {
+        db.exec(`ALTER TABLE devices DROP COLUMN ${col}`);
+        console.log(`[migrate] dropped devices.${col}`);
+      } catch (err) {
+        console.error(`[migrate] failed to drop devices.${col}`, err);
+      }
+    }
+  }
+}
+
 /* --------------------------------- seeding -------------------------------- */
 
 /** Sample rows so a fresh install is not an empty screen. Clearly flagged as samples. */
@@ -355,6 +397,8 @@ export function initDatabase(): void {
   migrateDeliveryJobs();
   migrateDeliveryJobKindUnique();
   backfillTakeProfits();
+  migrateTierNames();
+  migrateDeviceNotificationPrefs();
 
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     const exists = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);
@@ -363,6 +407,10 @@ export function initDatabase(): void {
 
   const adminHash = db.prepare('SELECT value FROM settings WHERE key = ?').get('admin_password_hash');
   if (!adminHash) {
+    if (process.env.NODE_ENV === 'production' && !process.env.ADMIN_PASSWORD) {
+      console.error('[init] Refusing to seed a default admin password in production — set ADMIN_PASSWORD.');
+      process.exit(1);
+    }
     const password = process.env.ADMIN_PASSWORD || 'Kx7-Panel-Trade-92';
     setSetting('admin_username', process.env.ADMIN_USERNAME || 'admin');
     setSetting('admin_password_hash', hashPassword(password));

@@ -31,7 +31,7 @@ export function LockedSignalCard({ signal }: { signal: Signal }): React.ReactEle
       <div className="absolute inset-0 flex items-center justify-center">
         <span className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-[#0b101b]/70 px-3 py-1.5 text-xs font-semibold text-slate-300 backdrop-blur">
           <Lock className="h-3.5 w-3.5 text-sky-300" aria-hidden="true" />
-          Pro required
+          Partner required
           <span className="text-sky-300 transition-transform group-hover:translate-x-0.5" aria-hidden="true">
             →
           </span>

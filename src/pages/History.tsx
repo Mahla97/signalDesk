@@ -14,7 +14,7 @@ export default function History(): React.ReactElement {
     <div className="space-y-5">
       <SectionTitle
         title="Closed signals"
-        subtitle={`Every closed signal from the last ${config.historyDays} days — free for everyone.`}
+        subtitle={`Every closed signal from the last ${config.historyDays} days — open to everyone.`}
       />
 
       <div className="grid grid-cols-3 gap-3">

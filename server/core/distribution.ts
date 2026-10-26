@@ -3,7 +3,7 @@ import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { db } from '../lib/db.js';
 import type { SignalRow } from './signals.js';
-import { changeSummary, getSignalById, isSignalInFreeWindow, listSignalChanges } from './signals.js';
+import { changeSummary, getSignalById, isSignalInMemberWindow, listSignalChanges } from './signals.js';
 import { isoPlusMs, nowIso } from './util.js';
 
 export type DeviceRow = {
@@ -13,9 +13,6 @@ export type DeviceRow = {
   user_id: number | null;
   platform: string;
   notifications_enabled: number;
-  trading_signals_enabled: number;
-  buy_signals_enabled: number;
-  sell_signals_enabled: number;
   disabled: number;
   timezone: string | null;
   created_at: string;
@@ -25,7 +22,7 @@ export type DeviceRow = {
 type DeviceWithUser = DeviceRow & {
   plan: string | null;
   suspended: number | null;
-  pro_end_at: string | null;
+  partner_end_at: string | null;
 };
 
 export type DeliveryKind = 'NEW' | 'UPDATE' | 'DELETE';
@@ -44,15 +41,6 @@ export function evaluateEligibility(
 ): Eligibility {
   if (device.disabled) return { eligible: false, reason: 'device_disabled' };
   if (!device.notifications_enabled) return { eligible: false, reason: 'notifications_off' };
-  if (!device.trading_signals_enabled) return { eligible: false, reason: 'trading_signals_off' };
-
-  const action = signal.action.toUpperCase();
-  if (action === 'BUY' && !device.buy_signals_enabled) {
-    return { eligible: false, reason: 'buy_pref_off' };
-  }
-  if (action === 'SELL' && !device.sell_signals_enabled) {
-    return { eligible: false, reason: 'sell_pref_off' };
-  }
 
   if (device.suspended) return { eligible: false, reason: 'user_suspended' };
 
@@ -61,15 +49,15 @@ export function evaluateEligibility(
   if (kind === 'UPDATE') return { eligible: true, reason: 'signal_updated' };
   if (kind === 'DELETE') return { eligible: true, reason: 'signal_deleted' };
 
-  const proActive =
-    device.plan === 'PRO' &&
+  const partnerActive =
+    device.plan === 'PARTNER' &&
     !device.suspended &&
-    Boolean(device.pro_end_at) &&
-    new Date(device.pro_end_at as string).getTime() > Date.now();
+    Boolean(device.partner_end_at) &&
+    new Date(device.partner_end_at as string).getTime() > Date.now();
 
-  if (proActive) return { eligible: true, reason: 'pro_active' };
+  if (partnerActive) return { eligible: true, reason: 'partner_active' };
 
-  return { eligible: true, reason: 'free_quota' };
+  return { eligible: true, reason: 'member_quota' };
 }
 
 /* ---------------------------- notification copy ---------------------------- */
@@ -99,8 +87,8 @@ export function buildNotification(
 }
 
 /**
- * Notification content for a specific device. Free devices get the full text
- * only when the signal is inside their daily visible window (free_visible_count);
+ * Notification content for a specific device. Members get the full text
+ * only when the signal is inside their daily visible window (member_visible_count);
  * otherwise the push is a generic "new signal" alert that leaks no details.
  * UPDATE/DELETE always show full text — the device already holds the signal.
  */
@@ -114,19 +102,19 @@ export function buildNotificationForDevice(
 
   const user = db
     .prepare(
-      'SELECT u.plan, u.suspended, u.pro_end_at FROM devices d LEFT JOIN users u ON u.id = d.user_id WHERE d.id = ?',
+      'SELECT u.plan, u.suspended, u.partner_end_at FROM devices d LEFT JOIN users u ON u.id = d.user_id WHERE d.id = ?',
     )
-    .get(deviceId) as { plan: string | null; suspended: number | null; pro_end_at: string | null } | undefined;
+    .get(deviceId) as { plan: string | null; suspended: number | null; partner_end_at: string | null } | undefined;
 
-  const proActive =
-    user?.plan === 'PRO' &&
+  const partnerActive =
+    user?.plan === 'PARTNER' &&
     !user?.suspended &&
-    Boolean(user?.pro_end_at) &&
-    new Date(user.pro_end_at as string).getTime() > Date.now();
+    Boolean(user?.partner_end_at) &&
+    new Date(user.partner_end_at as string).getTime() > Date.now();
 
-  if (proActive || isSignalInFreeWindow(signal)) return full;
+  if (partnerActive || isSignalInMemberWindow(signal)) return full;
 
-  const generic = { body: 'Upgrade to Pro to view this signal.' };
+  const generic = { body: 'Available to Partners.' };
   if (kind === 'DELETE') return { title: 'Signal removed', ...generic };
   if (kind === 'UPDATE') return { title: 'Signal updated', ...generic };
   return { title: 'New signal released', ...generic };
@@ -138,7 +126,7 @@ export function buildNotificationForDevice(
  * Fan a saved signal out into per-device delivery jobs.
  * Called AFTER the signal is persisted and AFTER the request responded.
  * UNIQUE(signal_id, device_id, revision) makes it idempotent per revision, so a
- * replayed webhook or a repeated save never produces a second push.
+ * repeated save never produces a second push.
  *
  * kind = 'NEW'    → every eligible device.
  * kind = 'UPDATE' → only devices that already received this signal.
@@ -156,7 +144,7 @@ export function enqueueSignalDistribution(
     kind === 'UPDATE' || kind === 'DELETE'
       ? (db
           .prepare(
-            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.pro_end_at AS pro_end_at
+            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.partner_end_at AS partner_end_at
              FROM devices d
              LEFT JOIN users u ON u.id = d.user_id
              WHERE d.disabled = 0
@@ -168,7 +156,7 @@ export function enqueueSignalDistribution(
           .all(signal.id) as DeviceWithUser[])
       : (db
           .prepare(
-            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.pro_end_at AS pro_end_at
+            `SELECT d.*, u.plan AS plan, u.suspended AS suspended, u.partner_end_at AS partner_end_at
              FROM devices d LEFT JOIN users u ON u.id = d.user_id
              WHERE d.disabled = 0`,
           )
@@ -279,7 +267,7 @@ async function getAccessToken(sa: ServiceAccount): Promise<string> {
  * the job is parked as SENT and the device picks it up from
  * /api/notifications/pending the moment it is running.
  * Adding Telegram (or any other channel) later means adding a function here —
- * the webhook and the signal service do not change.
+ * the signal service does not change.
  */
 export async function transportSend(
   device: DeviceRow,

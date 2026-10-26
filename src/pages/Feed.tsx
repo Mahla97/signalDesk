@@ -1,18 +1,54 @@
+import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { Bell, Crown, Radio, ShieldCheck } from 'lucide-react';
+import { Bell, Crown, Megaphone, Radio, ShieldCheck, X } from 'lucide-react';
 import SignalCard from '../components/SignalCard';
 import { Badge, Button, EmptyState, ErrorState, Panel, SectionTitle, SignalSkeletonList } from '../components/ui';
 import { useSignals } from '../lib/useSignals';
 import { useStore } from '../lib/store';
+import { KEYS, read, write } from '../lib/storage';
+
+function AnnouncementBanner(): React.ReactElement | null {
+  const { config } = useStore();
+  const [dismissedText, setDismissedText] = useState<string | null>(() => read(KEYS.dismissedAnnouncement));
+
+  if (!config.announcementEnabled || !config.announcementText) return null;
+  if (dismissedText === config.announcementText) return null;
+
+  function dismiss(): void {
+    write(KEYS.dismissedAnnouncement, config.announcementText);
+    setDismissedText(config.announcementText);
+  }
+
+  return (
+    <div
+      className="flex items-start gap-3 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4"
+      data-testid="announcement-banner"
+    >
+      <Megaphone className="mt-0.5 h-5 w-5 shrink-0 text-amber-300" aria-hidden="true" />
+      <p className="min-w-0 flex-1 whitespace-pre-wrap text-sm text-amber-100/90">{config.announcementText}</p>
+      <button
+        type="button"
+        onClick={dismiss}
+        aria-label="Dismiss announcement"
+        data-testid="announcement-dismiss"
+        className="rounded-lg p-1 text-amber-300/70 transition hover:bg-white/5 hover:text-amber-200"
+      >
+        <X className="h-4 w-4" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 export default function Feed(): React.ReactElement {
-  const { timezone, isPro, config, prefs, signalTick } = useStore();
+  const { timezone, isPartner, config, prefs, signalTick } = useStore();
   const { items, loading, loadingMore, error, hasMore, loadMore, reload } = useSignals('open', 15, signalTick);
 
   const lockedCount = items.filter((i) => i.locked).length;
 
   return (
     <div className="space-y-5">
+      <AnnouncementBanner />
+
       <Panel className="p-4" testId="status-panel">
         <div className="flex flex-wrap items-center gap-3">
           <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-emerald-500/10 text-emerald-300 sd-live-dot">
@@ -25,12 +61,12 @@ export default function Feed(): React.ReactElement {
               {prefs.notificationsEnabled ? ' • alerts on' : ' • alerts off'}
             </p>
           </div>
-          <Badge tone={isPro ? 'pro' : 'neutral'}>{isPro ? 'PRO' : 'FREE'}</Badge>
+          <Badge tone={isPartner ? 'partner' : 'neutral'}>{isPartner ? 'PARTNER' : 'MEMBER'}</Badge>
         </div>
 
-        {!isPro ? (
-          <p className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-400" data-testid="free-quota">
-            Free plan: the first {config.freeVisibleCount} signals of the day are unlocked; the rest are blurred.
+        {!isPartner ? (
+          <p className="mt-3 rounded-xl bg-white/5 px-3 py-2 text-xs text-slate-400" data-testid="member-quota">
+            Member: the first {config.memberVisibleCount} signals of the day are unlocked; the rest are blurred.
           </p>
         ) : null}
       </Panel>
@@ -81,25 +117,25 @@ export default function Feed(): React.ReactElement {
         ) : null}
       </div>
 
-      {!isPro && lockedCount > 0 ? (
-        <Panel className="p-5" testId="upgrade-panel">
+      {!isPartner && lockedCount > 0 ? (
+        <Panel className="p-5" testId="join-panel">
           <div className="flex items-start gap-3">
             <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-sky-500/15 text-sky-300">
               <Crown className="h-5 w-5" aria-hidden="true" />
             </span>
             <div className="min-w-0">
-              <h3 className="text-base font-bold text-slate-100">{lockedCount} signals are Pro-only</h3>
+              <h3 className="text-base font-bold text-slate-100">{lockedCount} signals are Partner-only</h3>
               <p className="mt-1 text-sm text-slate-400">
-                Pro members get every signal in full, in real time, with instant alerts. Upgrades are handled
-                by our team — message us on Telegram or through the website and you'll be switched over
+                Partners get every signal in full, in real time, with instant alerts. Partner access is handled
+                by our team — message us on Telegram and we'll switch you over
                 (usually within 24 hours).
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
-                <Link to="/contact">
-                  <Button testId="upgrade-contact">Contact us to go Pro</Button>
-                </Link>
+                <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener">
+                  <Button testId="join-team">Join Our Team</Button>
+                </a>
                 <Link to="/profile">
-                  <Button variant="ghost" testId="upgrade-account">Create an account</Button>
+                  <Button variant="ghost" testId="join-account">Create an account</Button>
                 </Link>
               </div>
             </div>

@@ -27,7 +27,7 @@ function targetPercent(entry: number | null, target: number, action: string | nu
 
 export default function SignalDetails(): React.ReactElement {
   const { id } = useParams<{ id: string }>();
-  const { timezone } = useStore();
+  const { timezone, config } = useStore();
   const [signal, setSignal] = useState<Signal | null>(null);
   const [loading, setLoading] = useState(true);
   const [locked, setLocked] = useState(false);
@@ -93,14 +93,14 @@ export default function SignalDetails(): React.ReactElement {
       ) : locked ? (
         <Panel className="p-6 text-center" testId="details-locked">
           <Lock className="mx-auto mb-3 h-8 w-8 text-sky-300" aria-hidden="true" />
-          <h1 className="text-lg font-extrabold text-slate-100">This signal is for Pro members</h1>
+          <h1 className="text-lg font-extrabold text-slate-100">This signal is for Partners</h1>
           <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">
-            Free accounts can open the newest signals only. Pro members see every signal in full, in real
-            time. Our team activates Pro manually — just reach out.
+            Members can open the newest signals only. Partners see every signal in full, in real
+            time. Our team activates Partner status manually — just reach out.
           </p>
-          <Link to="/contact" className="mt-4 inline-block">
-            <Button testId="details-upgrade">Contact us to go Pro</Button>
-          </Link>
+          <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-4 inline-block">
+            <Button testId="details-join">Join Our Team</Button>
+          </a>
         </Panel>
       ) : error ? (
         <ErrorState message={error} onRetry={load} testId="details-error" />
@@ -112,7 +112,7 @@ export default function SignalDetails(): React.ReactElement {
                 {signal.symbol}
               </h1>
               <Badge tone={tone}>{signal.action}</Badge>
-              <Badge tone={signal.status === 'OPEN' ? 'pro' : 'neutral'}>{signal.status}</Badge>
+              <Badge tone={signal.status === 'OPEN' ? 'partner' : 'neutral'}>{signal.status}</Badge>
               <EditedBadge signal={signal} />
               {signal.isSample ? <Badge tone="warn">SAMPLE</Badge> : null}
             </div>
