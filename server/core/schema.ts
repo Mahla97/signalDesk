@@ -137,7 +137,7 @@ CREATE TABLE IF NOT EXISTS settings (
 export const DEFAULT_SETTINGS: Record<string, string> = {
   member_visible_count: '3',
   history_days: '14',
-  telegram_url: 'https://t.me/signaldesk',
+  telegram_url: 'https://t.me/SignalDesk_com',
   website_url: 'https://signaldesk.example.com',
   instagram_url: 'https://instagram.com/signaldesk',
   support_email: 'support@signaldesk.example.com',

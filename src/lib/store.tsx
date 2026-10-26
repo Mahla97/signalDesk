@@ -30,7 +30,7 @@ const DEFAULT_PREFS: NotificationPreferences = {
 };
 
 const DEFAULT_CONFIG: AppConfig = {
-  telegramUrl: 'https://t.me/signaldesk',
+  telegramUrl: 'https://t.me/SignalDesk_com',
   websiteUrl: 'https://signaldesk.example.com',
   instagramUrl: 'https://instagram.com/signaldesk',
   supportEmail: 'support@signaldesk.example.com',
