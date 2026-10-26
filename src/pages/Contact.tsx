@@ -50,7 +50,7 @@ export default function Contact(): React.ReactElement {
           </li>
           <li className="flex gap-3">
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500/15 text-xs font-bold text-sky-300">2</span>
-            Message us on Telegram or through our website with that email address.
+            Message us on Telegram.
           </li>
           <li className="flex gap-3">
             <span className="grid h-6 w-6 shrink-0 place-items-center rounded-full bg-sky-500/15 text-xs font-bold text-sky-300">3</span>

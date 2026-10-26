@@ -127,7 +127,7 @@ export default function Feed(): React.ReactElement {
               <h3 className="text-base font-bold text-slate-100">{lockedCount} signals are Partner-only</h3>
               <p className="mt-1 text-sm text-slate-400">
                 Partners get every signal in full, in real time, with instant alerts. Partner access is handled
-                by our team — message us on Telegram or by email and we'll switch you over
+                by our team — message us on Telegram and we'll switch you over
                 (usually within 24 hours).
               </p>
               <div className="mt-3 flex flex-wrap gap-2">
