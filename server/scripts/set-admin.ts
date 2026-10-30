@@ -7,7 +7,7 @@
  * the server is up.
  */
 import { db } from '../lib/db.js';
-import { setSetting } from '../core/schema.js';
+import { initDatabase, setSetting } from '../core/schema.js';
 import { hashPassword } from '../core/util.js';
 
 const username = (process.env.ADMIN_USERNAME ?? '').trim();
@@ -22,8 +22,10 @@ if (password.length < 16) {
   process.exit(1);
 }
 
+// Brings an older database up to the current schema (admin_sessions) first.
+initDatabase();
 setSetting('admin_username', username);
 setSetting('admin_password_hash', hashPassword(password));
-const revoked = db.prepare('DELETE FROM admin_tokens').run().changes;
+const revoked = db.prepare('DELETE FROM admin_sessions').run().changes;
 
 console.log(`[admin] credentials updated for "${username}"; ${revoked} admin session(s) revoked.`);

@@ -1,4 +1,7 @@
-import { KEYS, deviceToken, read } from './storage';
+import { KEYS, deviceToken, read, remove } from './storage';
+
+/** Fired on window when an admin call comes back 401 (expired or revoked session). */
+export const ADMIN_SESSION_EXPIRED = 'sd:admin-session-expired';
 
 export class ApiError extends Error {
   status: number;
@@ -66,6 +69,11 @@ export async function api<T>(path: string, options: Options = {}): Promise<T> {
   }
 
   if (!res.ok) {
+    if (options.admin && res.status === 401) {
+      // Admin sessions expire after 12h; send the panel back to its login form.
+      remove(KEYS.admin);
+      window.dispatchEvent(new Event(ADMIN_SESSION_EXPIRED));
+    }
     const message = typeof data.error === 'string' ? data.error : 'Request failed (' + res.status + ')';
     throw new ApiError(res.status, message, data);
   }

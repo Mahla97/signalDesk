@@ -11,7 +11,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
-import { api, ApiError } from '../lib/api';
+import { ADMIN_SESSION_EXPIRED, api, ApiError } from '../lib/api';
 import { KEYS, read, remove, write } from '../lib/storage';
 import { Badge, Button, ErrorState, Panel, Skeleton } from '../components/ui';
 import { formatDateTime, formatPrice } from '../lib/time';
@@ -1578,6 +1578,12 @@ function SettingsTab(): React.ReactElement {
 export default function Admin(): React.ReactElement {
   const [authed, setAuthed] = useState(() => Boolean(read(KEYS.admin)));
   const [tab, setTab] = useState<Tab>('overview');
+
+  useEffect(() => {
+    const onExpired = () => setAuthed(false);
+    window.addEventListener(ADMIN_SESSION_EXPIRED, onExpired);
+    return () => window.removeEventListener(ADMIN_SESSION_EXPIRED, onExpired);
+  }, []);
 
   if (!authed) {
     return (
