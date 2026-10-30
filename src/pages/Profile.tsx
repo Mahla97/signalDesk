@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react';
 import { Crown, LogOut, Mail, ShieldAlert, Timer, UserRound } from 'lucide-react';
 import { Badge, Button, Panel, SectionTitle } from '../components/ui';
 import { useStore } from '../lib/store';
+import { IS_PLAY_BUILD } from '../lib/flags';
 import { ApiError } from '../lib/api';
 import { formatDateTime, formatDuration } from '../lib/time';
 
@@ -265,12 +266,18 @@ export default function Profile(): React.ReactElement {
         ) : (
           <div className="mt-4 rounded-xl border border-[#243049] bg-[#0c1220] p-4" data-testid="profile-member">
             <p className="text-sm font-bold text-slate-100">You are a Member</p>
-            <p className="mt-1 text-sm text-slate-400">
-              Partners receive every signal in real time. Our team activates Partner status manually.
-            </p>
-            <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-3 inline-block">
-              <Button testId="profile-join">Join Our Team</Button>
-            </a>
+            {IS_PLAY_BUILD ? (
+              <p className="mt-1 text-sm text-slate-400">Partner accounts receive every signal in real time.</p>
+            ) : (
+              <>
+                <p className="mt-1 text-sm text-slate-400">
+                  Partners receive every signal in real time. Our team activates Partner status manually.
+                </p>
+                <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-3 inline-block">
+                  <Button testId="profile-join">Join Our Team</Button>
+                </a>
+              </>
+            )}
           </div>
         )}
 

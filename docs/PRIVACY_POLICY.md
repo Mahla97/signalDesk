@@ -1,6 +1,6 @@
 # Privacy Policy — SignalDesk
 
-*Last updated: 2026-10-25*
+*Last updated: 2026-10-30*
 
 SignalDesk is a trading-signal app. It provides market signals for educational
 guidance only — it is **not a broker** and does not execute trades or access your
@@ -49,12 +49,18 @@ data is governed by Google's own privacy policy.
 
 ## 6. Security
 
-Passwords are stored hashed (scrypt with a per-user salt). Communication with the
-backend is encrypted in transit (HTTPS).
+- Passwords are stored hashed (scrypt with a per-user salt).
+- Communication with the backend is encrypted in transit (HTTPS only; the app
+  refuses unencrypted connections).
+- Sign-in sessions are stored only as one-way hashes, expire after 30 days without
+  use, and are limited to 3 devices per account. Signing out or resetting your
+  password ends them.
+- Your IP address is used briefly, in memory only, to block repeated failed
+  sign-in attempts. It is not stored.
 
 ## 7. Contact
 
 For privacy questions or data requests, contact us at:
 
 - Email: `support@signaldesk.example.com`
-- Telegram: `https://t.me/signaldesk`
+- Telegram: `https://t.me/SignalDesk_com`

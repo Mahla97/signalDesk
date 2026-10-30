@@ -12,6 +12,9 @@ const config: CapacitorConfig = {
     // debug builds against a plain-HTTP backend. Release must reject it, so it is
     // off by default and enabled explicitly via CAPACITOR_ALLOW_MIXED_CONTENT=true.
     allowMixedContent: process.env.CAPACITOR_ALLOW_MIXED_CONTENT === 'true',
+    // chrome://inspect exposes localStorage (session token). Off unless a dev
+    // explicitly opts in with CAPACITOR_WEB_DEBUG=true before `cap sync`.
+    webContentsDebuggingEnabled: process.env.CAPACITOR_WEB_DEBUG === 'true',
   },
   plugins: {
     FirebaseMessaging: {

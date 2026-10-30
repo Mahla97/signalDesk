@@ -39,7 +39,7 @@ staff management panel.
 | History | Closed signals from the last 14 days, with result and P/L, paginated |
 | Calculator | Position-size / risk calculator for crypto (units) and forex (lots) |
 | Settings | Timezone, notification preferences, full disclaimer |
-| Contact | Telegram / Website / Instagram / e-mail — also the route to becoming a Partner |
+| Contact | Telegram / Website / Instagram / e-mail — also the route to becoming a Partner (the Google Play build hides Telegram and every Partner prompt, §5.4) |
 | Account | Email + password sign-up/sign-in, Partner status and remaining time, password reset, delete account |
 
 **Backend**
@@ -52,8 +52,9 @@ staff management panel.
   everyone who already received the signal gets an update notice.
 * Partner access with an expiry job that returns users to Member automatically.
 
-**Not implemented on purpose:** in-app payments. Partner access happens by contacting the team;
-staff flip the tier in the admin panel.
+**Not implemented on purpose:** in-app payments. Partner access is sold outside the app (Telegram);
+staff flip the tier in the admin panel. Because of Google Play's Payments policy, the Play build
+never tells users how to get Partner access — Partners just sign in.
 
 ---
 
@@ -75,22 +76,32 @@ staff flip the tier in the admin panel.
 .
 ├── index.html                 App shell (RTL-safe, viewport meta, Vazirmatn font)
 ├── package.json
-├── vite.config.ts             React + Tailwind v4 plugins
+├── vite.config.ts             React + Tailwind v4 plugins, Play-build guard
+├── capacitor.config.ts        Android shell config (mixed content / WebView debug opt-ins)
 ├── README.md                  This document
 ├── docs/
-│   └── ARCHITECTURE.md        Deeper notes on the delivery pipeline
+│   ├── HANDOFF.md             Developer hand-off — the source of truth
+│   ├── ARCHITECTURE.md        Deeper notes on the delivery pipeline + security
+│   ├── DEPLOYMENT.md          Backend hosting, signing, Google Play
+│   ├── PRIVACY_POLICY.md      Privacy policy text (host it publicly)
+│   └── BRAND.md               Name, logo, colours
+├── android/                   Capacitor wrapper (network_security_config, signing via env)
 ├── server/
 │   ├── index.ts               HTTP entry point — every /api route lives here
 │   ├── lib/
 │   │   └── db.ts              Platform-managed SQLite handle (do not edit)
 │   ├── core/
 │   │   ├── schema.ts          Schema, migrations, settings, sample data
-│   │   ├── auth.ts            Users, sessions, admin tokens, Partner expiry
+│   │   ├── auth.ts            Users, hashed sessions (expiry + cap), admin sessions, Partner expiry
 │   │   ├── signals.ts         Ingestion, editing + change log, read/redaction
 │   │   ├── distribution.ts    Eligibility, queue, worker, transport
-│   │   └── util.ts            JSON/HTTP helpers, hashing, rate limiting
+│   │   ├── email.ts           Password-reset e-mail (SMTP, optional)
+│   │   └── util.ts            JSON/HTTP helpers, hashing, rate limiting, client IP
+│   ├── scripts/
+│   │   └── set-admin.ts       `npm run admin:credentials`
 │   ├── tests/
-│   │   └── api.test.ts        End-to-end API test suite
+│   │   ├── api.test.ts        End-to-end API test suite
+│   │   └── admin-signals.test.ts  Admin add/edit/delete lifecycle suite
 │   └── data/                  SQLite file (created at runtime, persistent)
 └── src/
     ├── App.tsx                Routes + notification deep-link handling
@@ -102,6 +113,7 @@ staff flip the tier in the admin panel.
     │   └── ui.tsx             Panel, Badge, Button, empty/error/skeleton states
     ├── lib/
     │   ├── api.ts             fetch wrapper (`/api/...`; absolute only in the native shell)
+    │   ├── flags.ts           `IS_PLAY_BUILD` (Google Play build)
     │   ├── store.tsx          App state: timezone, prefs, session, toasts
     │   ├── push.ts            Web notification permission + queue polling
     │   ├── nativePush.ts      Capacitor/FCM bridge (native builds only)
@@ -112,8 +124,8 @@ staff flip the tier in the admin panel.
     │   └── useSignals.ts      Paginated signal loading
     └── pages/
         ├── Onboarding.tsx  Feed.tsx  SignalDetails.tsx  History.tsx
-        ├── Calculator.tsx  Settings.tsx  Contact.tsx  Profile.tsx
-        └── Admin.tsx       Staff panel (own route + login)
+        ├── Calculator.tsx  Settings.tsx  Contact.tsx  Profile.tsx  ResetPassword.tsx
+        └── Admin.tsx       Staff panel (own route + login; only bundled when VITE_ADMIN_PATH is set)
 ```
 
 ---
@@ -151,18 +163,29 @@ restart.
 
 ### 5.2 Admin dashboard
 
-Open **http://localhost:5173/admin** — it is a route inside the same app, not a second server.
-Sign in with:
+The admin panel lives at a **secret path** set at build time with `VITE_ADMIN_PATH`
+(e.g. `/ops-<random>`). There is no link to it anywhere in the app. Without the variable the
+admin route does not exist and the Admin code is left out of the bundle — so the Android build
+never contains it.
 
-| Field | Default |
-| --- | --- |
-| Username | `admin` |
-| Password | `Kx7-Panel-Trade-92` |
+For local dev, put it in the gitignored `.env.development.local`:
 
-There is also a discreet **“Staff access”** link in the desktop footer (hidden on mobile).
+```bash
+VITE_ADMIN_PATH=/ops-<random>
+```
 
-Those are the defaults, hashed into the database on **first boot** from `ADMIN_USERNAME` /
-`ADMIN_PASSWORD`. Changing the variables afterwards has no effect — see §6.
+Then open `http://localhost:5173/ops-<random>`. A fresh database seeds the dev defaults
+(`admin` / `Kx7-Panel-Trade-92`); production refuses to boot on them.
+
+Rotate the credentials at any time (also revokes every admin session):
+
+```bash
+ADMIN_USERNAME=... ADMIN_PASSWORD=... npm run admin:credentials
+```
+
+The password must be at least 16 characters. Admin sessions last 12 hours; after that the
+panel returns to its login form. Five wrong passwords from one IP lock admin login for
+15 minutes (restart the dev server to clear it).
 
 ### 5.3 Android demo
 
@@ -174,8 +197,8 @@ is `https://localhost`, so a relative `/api` call has nothing to resolve against
 # 1. build the web assets with the API origin baked in
 VITE_API_BASE_URL=http://10.0.2.2:3001 npm run build
 
-# 2. copy them into the native project
-npx cap sync android
+# 2. copy them into the native project (the flag allows an http:// backend; debug only)
+CAPACITOR_ALLOW_MIXED_CONTENT=true npx cap sync android
 
 # 3. build and install the debug APK
 cd android
@@ -195,24 +218,42 @@ Which origin the device should use:
 
 (`JAVA_HOME` assumes Homebrew's `openjdk@21`; Capacitor 8 refuses to build on Java 17.)
 
-Cleartext `http://` is already allowed: `android.allowMixedContent` is set in
-`capacitor.config.ts` and a debug-only `android/app/src/debug/AndroidManifest.xml` enables
-`usesCleartextTraffic`. Release builds stay HTTPS-only.
+Cleartext `http://` works in **debug builds only**:
+`android/app/src/debug/res/xml/network_security_config.xml` allows it (and user-installed CAs,
+for proxy testing), and `CAPACITOR_ALLOW_MIXED_CONTENT=true` lets the `https://localhost` WebView
+call it. The release config (`src/main/res/xml/network_security_config.xml`) allows HTTPS only
+and trusts system CAs only.
 
-Notifications with the app **closed** additionally need Firebase: `google-services.json` in
-`android/app/`, plus a service account on the server (`GOOGLE_APPLICATION_CREDENTIALS`, §6).
-Without the service account nothing is lost — the device simply drains the queue from
-`/api/notifications/pending` while it is running.
+WebView remote debugging (`chrome://inspect`) is off in every build. For a debug session run
+`CAPACITOR_WEB_DEBUG=true npx cap sync android`.
 
-### 5.4 Scripts
+Notifications need Firebase: `google-services.json` in `android/app/`, plus a service account
+on the server (`GOOGLE_APPLICATION_CREDENTIALS`, §6). **The Android app does not poll the queue**,
+so without the service account it receives no notifications (the feed still refreshes every 30s).
+
+### 5.4 Google Play build
+
+```bash
+VITE_API_BASE_URL=https://YOUR-API npm run build:play   # vite build + cap sync android
+```
+
+`build:play` sets `VITE_STORE_BUILD=play`, which hides every "Join Our Team" / "How to become a
+Partner" prompt **and the Telegram link** (Partner access is sold there, and Play forbids steering
+users to an outside payment). The build fails if `VITE_ADMIN_PATH` is set or the API URL isn't
+`https://`. Signing and upload: `docs/DEPLOYMENT.md` §4.
+
+### 5.5 Scripts
 
 | Script | Purpose |
 | --- | --- |
 | `npm run dev` | Vite dev server for the app |
 | `npm run build` | Production build into `dist/` |
+| `npm run build:play` | Google Play build + `cap sync android` (§5.4) |
 | `npm run preview` | Serve the built app locally |
 | `npm run server` | Start the API (`server/index.ts` via tsx) |
 | `npm run test:api` | Run the API test suite against a running server |
+| `npm run test:admin` | Admin add/edit/delete lifecycle suite |
+| `npm run admin:credentials` | Rotate admin username/password and revoke admin sessions |
 
 ---
 
@@ -227,6 +268,7 @@ safe default — but the first two must be set before going live.
 | `ADMIN_USERNAME` | `admin` | Admin username, stored on first boot. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON. When set, notifications are pushed through FCM HTTP v1 so they arrive with the app closed. Without it the app pulls its queue while running. |
 | `PORT` | `3001` | Port the API listens on (assigned by the host in production). |
+| `TRUST_PROXY_HOPS` | `0` | Reverse proxies in front of Node. `0` ignores `X-Forwarded-For` (clients can fake it). Set `1` behind one Caddy/nginx/PaaS router, or every user shares the proxy's rate-limit bucket. |
 | `APP_URL` | `http://localhost:5173` | Public origin used to build password-reset links. |
 | `SMTP_HOST` | — | SMTP host for password-reset email. When unset, the reset link is logged instead of emailed. |
 | `SMTP_PORT` | `587` | SMTP port. |
@@ -236,7 +278,18 @@ safe default — but the first two must be set before going live.
 | `SMTP_FROM` | `SMTP_USER` | From address for reset emails. |
 
 Changing `ADMIN_PASSWORD` after the first boot has no effect — the credentials are already
-in the `settings` table. Delete the `admin_password_hash` row (or the database) to re-seed.
+in the `settings` table. Use `npm run admin:credentials` instead.
+
+Build-time variables (client / Android):
+
+| Variable | Purpose |
+| --- | --- |
+| `VITE_API_BASE_URL` | Absolute API origin, required for the Android build. Must be `https://` for Play. |
+| `VITE_ADMIN_PATH` | Secret admin route. Leave unset for Android. |
+| `VITE_STORE_BUILD` | `play` = Google Play build (set by `npm run build:play`). |
+| `CAPACITOR_ALLOW_MIXED_CONTENT` | `true` before `cap sync` for a debug build against `http://`. Never for release. |
+| `CAPACITOR_WEB_DEBUG` | `true` before `cap sync` to allow `chrome://inspect`. Never for release. |
+| `SIGNING_STORE_FILE` · `SIGNING_STORE_PASSWORD` · `SIGNING_KEY_ALIAS` · `SIGNING_KEY_PASSWORD` | Upload-key signing for `:app:bundleRelease`. Unset = unsigned. |
 
 Runtime settings that do **not** need a redeploy live in the admin panel’s Settings tab:
 unlocked signal count, history window, contact links, support e-mail.
@@ -252,21 +305,25 @@ and a busy timeout are enabled, and foreign keys are on.
 
 1. `migrate(SCHEMA_SQL)` — `CREATE TABLE IF NOT EXISTS` for every table and index.
 2. Additive column migrations for databases created by an older build:
-   `signals.take_profits`, `signals.edited_at`, `signals.edit_count`.
+   `signals.take_profits`, `signals.edited_at`, `signals.edit_count`, `signals.deleted_at`.
 3. `delivery_jobs` rebuild — the original table had `UNIQUE(signal_id, device_id)`, which made
    a second delivery for the same signal impossible. It is recreated with
-   `UNIQUE(signal_id, device_id, revision)` plus `kind`, and existing rows are copied over as
+   `UNIQUE(signal_id, device_id, revision, kind)`, and existing rows are copied over as
    `kind = 'NEW', revision = 0`.
 4. `take_profits` backfill from the legacy single `take_profit` column.
-5. Default settings, admin credentials, and sample signals **only when the table is empty**.
+5. Session migration — the legacy `sessions` table (raw tokens) is moved into
+   `auth_sessions` as hashes (users stay signed in), and `admin_tokens` is dropped
+   (admins sign in again).
+6. Default settings, admin credentials, and sample signals **only when the table is empty**.
 
 ### Tables
 
 | Table | Purpose |
 | --- | --- |
 | `users` | email, password hash, plan, `partner_start_at`/`partner_end_at`, suspended, timezone |
-| `sessions` | bearer tokens for signed-in users |
-| `admin_tokens` | bearer tokens for the staff panel |
+| `auth_sessions` | `sha256` of user session tokens, `expires_at` (30-day sliding), max 3 per user |
+| `admin_sessions` | `sha256` of admin tokens, 12-hour `expires_at` |
+| `password_resets` | `sha1` of single-use reset tokens, 1-hour expiry |
 | `devices` | one row per install: push token, owner, notification preferences |
 | `signals` | the signal itself, including `take_profits` (JSON array), `close_price`, `edited_at`, `edit_count` |
 | `signal_edits` | change log: one row per changed field per revision (old → new) |
@@ -386,14 +443,32 @@ than the balance. Spread, commission, funding and slippage are explicitly exclud
 | Role | Auth | Can |
 | --- | --- | --- |
 | Guest / Member | none (device token only) | Browse the feed with the first N open signals of the day unlocked, read closed history, use the calculator, set timezone |
-| Partner | email + password, tier granted by staff | Everything above with **all** signals unlocked and real-time pushes while `partner_end_at` is in the future |
+| Partner | email + password, tier granted by staff | Everything above with **all** signals unlocked and real-time pushes while `partner_end_at` is in the future. Signed in on at most 3 devices at once. |
 | Suspended | — | Treated as ineligible for all notifications |
-| Admin | username + password → bearer token | Users and Partner durations, suspend, create/edit/close/delete signals, delivery logs, runtime settings |
+| Admin | username + password → bearer token (12h) | Users and Partner durations, suspend, create/edit/close/delete signals, delivery logs, runtime settings |
 
 Enforcement is server-side. Locked signals are **redacted before serialisation** — a Member
 client never receives the symbol, action or prices of a locked signal, and
 `GET /api/signals/:id` answers `403 partner_required` for it. Every `/api/admin/*` route calls the
 same `requireAdmin()` guard.
+
+### Security at a glance
+
+* **Sessions:** random 256-bit tokens; the DB stores only `sha256(token)`. User sessions expire
+  after 30 days without use and are capped at 3 per account (oldest signed out). Admin sessions
+  expire after 12 hours. A password reset signs out every session.
+* **Rate limits** (answer `429`):
+  * Per minute: login 15, signup 10, admin login 10.
+  * Failed logins (15 min): 10 per email, 30 per IP; admin 5 per IP.
+  * Forgot-password: 3 per email per hour, 20 per IP per 15 min. Reset-password: 10 per IP per 15 min.
+  * The client IP comes from the socket. `X-Forwarded-For` counts only when `TRUST_PROXY_HOPS` is set.
+* **Android:**
+  * Release allows HTTPS only and trusts system CAs only.
+  * WebView debugging is off, `allowBackup=false`, and the release build is not debuggable.
+  * The only exported activity is the launcher.
+* **Play build:** no admin code, no Partner prompts, no Telegram link.
+
+Details: `docs/ARCHITECTURE.md` §7.
 
 ---
 
@@ -411,18 +486,18 @@ same `requireAdmin()` guard.
 | DELETE | `/api/devices/push-token/:id` | Unregister (own device only) |
 | GET | `/api/notifications/pending` | Device queue drain (`x-device-token`) |
 | POST | `/api/notifications/ack` | Mark jobs delivered |
-| POST | `/api/auth/signup` · `/api/auth/login` · `/api/auth/logout` | Email + password |
-| GET | `/api/auth/me` | Current user + device push usage |
+| POST | `/api/auth/signup` · `/api/auth/login` · `/api/auth/logout` | Email + password. Login: `429` after too many failures |
+| GET | `/api/auth/me` | Current user + device; `{ user: null }` for an expired/revoked session |
 | PATCH | `/api/auth/timezone` | Persist the chosen timezone |
 | POST | `/api/auth/forgot-password` | `{ email }` — always `200`; emails a reset link when the account exists |
-| POST | `/api/auth/reset-password` | `{ token, password }` — sets the new password |
+| POST | `/api/auth/reset-password` | `{ token, password }` — sets the new password and signs out every session |
 | DELETE | `/api/auth/me` | Delete the signed-in account |
 
 ### Admin (all require `x-admin-token`)
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| POST | `/api/admin/login` · `/api/admin/logout` | Returns / revokes a bearer token |
+| POST | `/api/admin/login` · `/api/admin/logout` | Returns (12h) / revokes a bearer token. `429` after 5 failures per IP |
 | GET | `/api/admin/overview` | Counters, performance, edited-signal count |
 | GET | `/api/admin/users?q=` | Search by email |
 | POST | `/api/admin/users/:id/plan` | `{ plan: 'PARTNER', days: 30 }` or `{ plan: 'MEMBER' }` |
@@ -463,10 +538,9 @@ Response: `{ signal, changes[], revision, notified }`.
 
 ## 11. Admin panel
 
-**Locally:** <http://localhost:5173/admin> — sign in as `admin` / `Kx7-Panel-Trade-92` (§5.2).
-**Deployed:** `https://YOUR-DOMAIN/admin`. Either way there is a discreet “Staff access” link in
-the desktop footer (hidden on mobile). Change the credentials via the `ADMIN_USERNAME` /
-`ADMIN_PASSWORD` variables **before the first boot**, or ask for a rotation.
+Reached only at the secret `VITE_ADMIN_PATH` (§5.2) — locally `http://localhost:5173<path>`,
+deployed `https://YOUR-DOMAIN<path>`. There is no link to it in the app. Rotate the credentials
+with `npm run admin:credentials`.
 
 | Tab | Contents |
 | --- | --- |
@@ -523,7 +597,9 @@ symbol/price. Partners get the full text. Every skip reason is visible in
 
 ```bash
 npm run server        # terminal 1
+set -a; . ~/.config/signaldesk/admin-credentials.txt; set +a   # your admin creds
 npm run test:api      # terminal 2
+npm run test:admin
 ```
 
 Override the target when testing a deployed instance:
@@ -539,6 +615,8 @@ Coverage:
 * multiple take profits via `takeProfits: []` and via `tp1`/`tp2`
 * member vs partner: locked items in the list, `403` on a locked detail, open history
 * auth: weak password, duplicate email, wrong password, new accounts start as Member
+* sessions: the oldest session is signed out past the 3-session cap, the newest stays valid,
+  logout revokes the token
 * password reset: invalid email rejected, known/unknown email accepted silently, bogus token rejected
 * admin: unauthenticated rejection, bad credentials, granting/revoking Partner
 * delete account: sign up, delete, account gone
@@ -547,7 +625,11 @@ Coverage:
   take-profit replacement, revision bump, change log, no-op edits, the UPDATE notification
   reaching devices that already had the signal, and close-price recording
 
-**Expected result: `61 passed, 0 failed`.**
+**Expected result: `64 passed, 0 failed`** (`test:admin`: `14 passed, 0 failed`).
+
+Leave ~1 minute between back-to-back `test:api` runs: one run nearly uses up the per-IP signup
+and login per-minute limits. Rate limits themselves are tested by hand, not in the suite —
+tripping them would lock the test machine out of later runs. Restarting the server clears them.
 
 The suite runs against a live server and **writes real rows**, so point it at a disposable
 database — not production. To protect a database you care about, move `server/data/app.db`,
@@ -559,19 +641,22 @@ against the fresh database, then move all three back.
 ## 13. Production deployment
 
 1. **Build the app:** `npm run build` → `dist/`.
-2. **Run the API:** `npm run server` with `PORT`, `ADMIN_USERNAME`, `ADMIN_PASSWORD` and
-   optionally `GOOGLE_APPLICATION_CREDENTIALS` set.
+2. **Run the API:** `npm run server` with `NODE_ENV=production`, `PORT`, `ADMIN_USERNAME`,
+   `ADMIN_PASSWORD`, `TRUST_PROXY_HOPS` (usually `1`) and optionally `GOOGLE_APPLICATION_CREDENTIALS` set.
 3. **Serve both behind one HTTPS origin** so the app can keep calling relative `/api/...` paths.
 4. **Persist `server/data/`** — it holds the SQLite database.
 5. **First-run checklist:**
-   * sign in to `/admin`, delete the sample signals;
+   * sign in to the admin panel (secret `VITE_ADMIN_PATH`), delete the sample signals;
    * set the Telegram / Website / Instagram links and the support e-mail;
    * publish a test signal from the Signals tab and watch it land in the delivery logs.
 
 **Android app.** The client is wrapped with Capacitor (`android/`) and packaged from the same
-web build. Notifications while the app is fully closed require a Firebase service account
-(`GOOGLE_APPLICATION_CREDENTIALS`); without it the queue is drained whenever the app is running
-and nothing is lost — the items simply wait.
+web build with `npm run build:play` (§5.4). Notifications require a Firebase service account
+(`GOOGLE_APPLICATION_CREDENTIALS`) — the Android app does not poll. Full hosting, signing and
+Play Console steps: `docs/DEPLOYMENT.md`.
+
+**Play-policy note:** the in-app announcement banner (Admin → Settings) also shows in the Play
+app. Never put prices, "become a Partner", or Telegram links in it.
 
 ---
 
@@ -580,16 +665,18 @@ and nothing is lost — the items simply wait.
 | Symptom | Cause / fix |
 | --- | --- |
 | Signal published but no notification | Check Delivery logs — the skip reason says why (`notifications_off`, `device_disabled`, …). |
-| Notifications only arrive with the app open | No Firebase service account is configured (`GOOGLE_APPLICATION_CREDENTIALS` unset). That is the expected fallback behaviour. |
+| Notifications only arrive with the app open | Web: the browser polls only while the tab is open. Android: no Firebase service account on the server (`GOOGLE_APPLICATION_CREDENTIALS` unset) — Android gets no pushes at all without it. |
 | An edit sent no notification | Nothing actually changed, `notify` was unticked, or no device had received the original signal yet (SENT/DELIVERED). |
-| Admin password change ignored | Credentials are seeded once. Remove the `admin_password_hash` setting row and restart. |
+| Admin password change ignored | Credentials are seeded once. Use `npm run admin:credentials`. |
+| `429` / "Too many failed sign-in attempts" | Rate limit (§9). Wait 15 minutes, or restart the dev server to clear it. In production with every user hitting this, `TRUST_PROXY_HOPS` is unset and everyone shares the proxy's IP. |
+| Admin panel suddenly shows the login form | The 12-hour admin session expired (or credentials were rotated). Sign in again. |
+| Signed out on one device after signing in elsewhere | More than 3 active sessions — the oldest is signed out by design. |
+| `test:api` fails with `too many attempts` | Back-to-back runs within a minute. Wait a minute or restart the server. |
+| `npm run build:play` fails | `VITE_ADMIN_PATH` is set, or `VITE_API_BASE_URL` isn't `https://`. |
 | Sample signals visible in production | Admin → Signals → **Delete sample data**. |
 | `ExperimentalWarning: SQLite is an experimental feature` | Normal Node output. Not an error. |
 | Browser feed is blank / errors immediately | The API isn't running, or Vite is proxying to the wrong port. Check `npm run server` is up and that `API_PROXY_TARGET` matches its `PORT`. |
 | Android app shows a blank screen | Built without `VITE_API_BASE_URL`, so `/api` hits the WebView's own asset server and returns `index.html`. Rebuild per §5.3. |
+| Release Android app can't reach the API | The release build allows HTTPS only. Point `VITE_API_BASE_URL` at an `https://` backend. |
 | Android push never arrives; logcat shows `Firebase Installations Service is unavailable` | The emulator can't resolve hostnames (it does **not** inherit the Mac's resolver). Boot it with a working DNS server: `emulator -avd <name> -dns-server <your-dns>`. |
-| Android push never arrives and logcat is clean | No service account on the server, so `transportSend` silently no-ops (see §6). The app still gets the signal by polling while it runs. |
-
----
-
-*Test line for PR workflow verification (remove after test).*
+| Android push never arrives and logcat is clean | No service account on the server, so `transportSend` silently no-ops (see §6). Android does not poll, so it receives nothing until one is configured. |

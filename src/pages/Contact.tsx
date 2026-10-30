@@ -1,6 +1,7 @@
 import { Globe, Instagram, Mail, MessageCircle, Sparkles } from 'lucide-react';
 import { Disclaimer, Panel, SectionTitle } from '../components/ui';
 import { useStore } from '../lib/store';
+import { IS_PLAY_BUILD } from '../lib/flags';
 
 type LinkCardProps = {
   href: string;
@@ -36,8 +37,12 @@ export default function Contact(): React.ReactElement {
 
   return (
     <div className="space-y-5">
-      <SectionTitle title="Contact us" subtitle="Questions, support, or joining our team" />
+      <SectionTitle
+        title="Contact us"
+        subtitle={IS_PLAY_BUILD ? 'Questions or support' : 'Questions, support, or joining our team'}
+      />
 
+      {IS_PLAY_BUILD ? null : (
       <Panel className="p-5" testId="join-info">
         <h2 className="flex items-center gap-2 text-base font-bold text-slate-100">
           <Sparkles className="h-5 w-5 text-sky-300" aria-hidden="true" />
@@ -61,16 +66,20 @@ export default function Contact(): React.ReactElement {
         {/*  Partner activation is handled by our team.*/}
         {/*</p>*/}
       </Panel>
+      )}
 
       <div className="grid gap-3 sm:grid-cols-2">
-        <LinkCard
-          href={config.telegramUrl}
-          title="Telegram"
-          description={config.telegramUrl}
-          icon={MessageCircle}
-          testId="contact-telegram"
-          accent="bg-sky-500/15 text-sky-300"
-        />
+        {/* Partner access is sold on Telegram, so the Play build can't link there. */}
+        {IS_PLAY_BUILD ? null : (
+          <LinkCard
+            href={config.telegramUrl}
+            title="Telegram"
+            description={config.telegramUrl}
+            icon={MessageCircle}
+            testId="contact-telegram"
+            accent="bg-sky-500/15 text-sky-300"
+          />
+        )}
         <LinkCard
           href={config.websiteUrl}
           title="Website"

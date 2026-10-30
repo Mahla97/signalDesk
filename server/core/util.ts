@@ -70,25 +70,58 @@ export function verifyPassword(password: string, stored: string): boolean {
   return timingSafeEqual(candidate, expected);
 }
 
+export function sha256(input: string): string {
+  return createHash('sha256').update(input).digest('hex');
+}
+
+/* ------------------------------ rate limiting ------------------------------ */
+
 type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
 
-/** Very small fixed-window rate limiter. Returns true when the call is allowed. */
-export function rateLimit(key: string, limit: number, windowMs: number): boolean {
-  const now = Date.now();
-  const bucket = buckets.get(key);
-  if (!bucket || bucket.resetAt <= now) {
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
-    return true;
-  }
-  bucket.count += 1;
-  if (buckets.size > 5000) buckets.clear();
-  return bucket.count <= limit;
+/** Drops expired buckets. Only clears live ones as a last-resort memory guard. */
+function pruneBuckets(now: number): void {
+  if (buckets.size < 10_000) return;
+  for (const [key, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(key);
+  if (buckets.size > 100_000) buckets.clear();
 }
 
+/** True when `key` has already used up `limit` hits in its current window. */
+export function isLimited(key: string, limit: number): boolean {
+  const bucket = buckets.get(key);
+  return Boolean(bucket && bucket.resetAt > Date.now() && bucket.count >= limit);
+}
+
+/** Records one hit against `key` (starts a new window when the old one expired). */
+export function recordHit(key: string, windowMs: number): void {
+  const now = Date.now();
+  pruneBuckets(now);
+  const bucket = buckets.get(key);
+  if (!bucket || bucket.resetAt <= now) buckets.set(key, { count: 1, resetAt: now + windowMs });
+  else bucket.count += 1;
+}
+
+/** Fixed-window limiter that counts every call. Returns true when the call is allowed. */
+export function rateLimit(key: string, limit: number, windowMs: number): boolean {
+  if (isLimited(key, limit)) return false;
+  recordHit(key, windowMs);
+  return true;
+}
+
+/**
+ * Client IP for rate limiting. `X-Forwarded-For` is client-controlled, so it is
+ * only honoured when TRUST_PROXY_HOPS says how many reverse proxies we sit
+ * behind (1 for a single Caddy/nginx/PaaS router). We then take the entry that
+ * the outermost trusted proxy appended — never the client-supplied left side.
+ */
 export function clientIp(req: IncomingMessage): string {
+  const hops = Number(process.env.TRUST_PROXY_HOPS ?? 0);
   const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.length > 0) return fwd.split(',')[0].trim();
+  if (hops > 0 && typeof fwd === 'string' && fwd.length > 0) {
+    const chain = fwd.split(',').map((s) => s.trim()).filter(Boolean);
+    const ip = chain[chain.length - hops];
+    if (ip) return ip;
+  }
   return req.socket.remoteAddress ?? 'unknown';
 }
 

@@ -16,11 +16,28 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Upload key comes from the environment (CI secrets or your shell), never the
+    // repo. Without these vars the release build is simply left unsigned.
+    def signingStoreFile = System.getenv("SIGNING_STORE_FILE")
+    signingConfigs {
+        if (signingStoreFile) {
+            release {
+                storeFile file(signingStoreFile)
+                storePassword System.getenv("SIGNING_STORE_PASSWORD")
+                keyAlias System.getenv("SIGNING_KEY_ALIAS")
+                keyPassword System.getenv("SIGNING_KEY_PASSWORD")
+            }
+        }
+    }
     buildTypes {
         release {
+            debuggable false
             minifyEnabled true
             shrinkResources true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            if (signingStoreFile) {
+                signingConfig signingConfigs.release
+            }
         }
     }
 }

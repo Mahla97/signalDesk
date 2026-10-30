@@ -1,5 +1,8 @@
 import { db, migrate } from '../lib/db.js';
-import { hashPassword, nowIso, sha1 } from './util.js';
+import { hashPassword, isoPlusMs, nowIso, sha1, sha256 } from './util.js';
+
+/** How long a user session lives without use (sliding). Shared with auth.ts. */
+export const USER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
 /**
  * delivery_jobs is kept in its own constant because it is the one table that
@@ -46,12 +49,17 @@ CREATE TABLE IF NOT EXISTS users (
   last_seen_at TEXT
 );
 
-CREATE TABLE IF NOT EXISTS sessions (
-  token TEXT PRIMARY KEY,
+-- Only sha256(token) is stored, so a leaked database holds no usable sessions.
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash TEXT PRIMARY KEY,
   user_id INTEGER NOT NULL,
   created_at TEXT NOT NULL,
+  last_used_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS password_resets (
   token_hash TEXT PRIMARY KEY,
@@ -61,9 +69,10 @@ CREATE TABLE IF NOT EXISTS password_resets (
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
-CREATE TABLE IF NOT EXISTS admin_tokens (
-  token TEXT PRIMARY KEY,
-  created_at TEXT NOT NULL
+CREATE TABLE IF NOT EXISTS admin_sessions (
+  token_hash TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS devices (
@@ -313,6 +322,37 @@ function migrateDeviceNotificationPrefs(): void {
   }
 }
 
+/**
+ * Sessions used to be stored as raw tokens with no expiry. Move user sessions
+ * into auth_sessions (hashed, 30-day expiry) so nobody is signed out, and drop
+ * the old admin tokens outright — admins simply sign in again.
+ */
+function migrateSessions(): void {
+  if (tableColumns('sessions').length > 0) {
+    try {
+      const rows = db.prepare('SELECT token, user_id, created_at FROM sessions').all() as {
+        token: string;
+        user_id: number;
+        created_at: string;
+      }[];
+      const now = nowIso();
+      const expires = isoPlusMs(USER_SESSION_TTL_MS);
+      const insert = db.prepare(
+        'INSERT OR IGNORE INTO auth_sessions (token_hash, user_id, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?)',
+      );
+      for (const row of rows) insert.run(sha256(row.token), row.user_id, row.created_at, now, expires);
+      db.exec('DROP TABLE sessions');
+      console.log(`[migrate] moved ${rows.length} session(s) to hashed auth_sessions`);
+    } catch (err) {
+      console.error('[migrate] session migration failed', err);
+    }
+  }
+  if (tableColumns('admin_tokens').length > 0) {
+    db.exec('DROP TABLE admin_tokens');
+    console.log('[migrate] dropped legacy admin_tokens (admins must sign in again)');
+  }
+}
+
 /* --------------------------------- seeding -------------------------------- */
 
 /** Sample rows so a fresh install is not an empty screen. Clearly flagged as samples. */
@@ -399,6 +439,7 @@ export function initDatabase(): void {
   backfillTakeProfits();
   migrateTierNames();
   migrateDeviceNotificationPrefs();
+  migrateSessions();
 
   for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     const exists = db.prepare('SELECT 1 FROM settings WHERE key = ?').get(key);

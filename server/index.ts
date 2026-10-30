@@ -21,6 +21,7 @@ import {
   login,
   logout,
   publicUser,
+  purgeExpiredSessions,
   resetPasswordWithToken,
   touchUser,
   type UserRow,
@@ -53,11 +54,13 @@ import {
   clientIp,
   header,
   isEmail,
+  isLimited,
   match,
   nowIso,
   randomToken,
   rateLimit,
   readJson,
+  recordHit,
   sendJson,
   toNumber,
   toStr,
@@ -73,15 +76,23 @@ try {
 initDatabase();
 startWorker();
 
-// Scheduled job: expire PARTNER access once a minute.
+// Scheduled job: expire PARTNER access and stale sessions once a minute.
 expirePartnerAccess();
+purgeExpiredSessions();
 setInterval(() => {
   try {
     expirePartnerAccess();
+    purgeExpiredSessions();
   } catch (err) {
     console.error('[cron] expiry job failed', err);
   }
 }, 60_000);
+
+// Failed-login budgets (successful logins never count).
+const FAIL_WINDOW_MS = 15 * 60_000;
+const LOGIN_FAILS_PER_EMAIL = 10;
+const LOGIN_FAILS_PER_IP = 30;
+const ADMIN_FAILS_PER_IP = 5;
 
 /* ------------------------------- helpers --------------------------------- */
 
@@ -385,8 +396,18 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     }
     const email = (toStr(body.email, 120) ?? '').toLowerCase();
     const password = toStr(body.password, 200) ?? '';
+    // Only failures count, so real users never hit this. Per-email stops a
+    // targeted guess from many IPs; per-IP stops one IP spraying many emails.
+    const failEmailKey = 'login-fail-email:' + email;
+    const failIpKey = 'login-fail-ip:' + ip;
+    if (isLimited(failEmailKey, LOGIN_FAILS_PER_EMAIL) || isLimited(failIpKey, LOGIN_FAILS_PER_IP)) {
+      sendJson(res, 429, { error: 'Too many failed sign-in attempts. Try again in 15 minutes.' });
+      return;
+    }
     const session = login(email, password);
     if (!session) {
+      recordHit(failEmailKey, FAIL_WINDOW_MS);
+      recordHit(failIpKey, FAIL_WINDOW_MS);
       sendJson(res, 401, { error: 'Email or password is incorrect.' });
       return;
     }
@@ -400,7 +421,9 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
 
   if (method === 'POST' && path === '/api/auth/forgot-password') {
     const ip = clientIp(req);
-    if (!rateLimit('forgot:' + ip, 5, 15 * 60_000)) {
+    // Per-IP caps volume (generous: carrier NAT shares IPs); per-email below
+    // is what protects an individual inbox.
+    if (!rateLimit('forgot:' + ip, 20, 15 * 60_000)) {
       sendJson(res, 429, { error: 'too many attempts, please try again later' });
       return;
     }
@@ -414,6 +437,12 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
     const email = (toStr(body.email, 120) ?? '').toLowerCase();
     if (!isEmail(email)) {
       sendJson(res, 422, { error: 'Please enter a valid email address.' });
+      return;
+    }
+    // Stops someone flooding one inbox with reset emails from many IPs. Same
+    // 200 response as the normal path, so it reveals nothing about the account.
+    if (!rateLimit('forgot-email:' + email, 3, 60 * 60_000)) {
+      sendJson(res, 200, { ok: true });
       return;
     }
     const user = findUserByEmail(email);
@@ -438,6 +467,10 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
   }
 
   if (method === 'POST' && path === '/api/auth/reset-password') {
+    if (!rateLimit('reset:' + clientIp(req), 10, 15 * 60_000)) {
+      sendJson(res, 429, { error: 'too many attempts, please try again later' });
+      return;
+    }
     let body: Record<string, unknown>;
     try {
       body = await readJson(req);
@@ -538,8 +571,15 @@ async function handle(req: IncomingMessage, res: ServerResponse): Promise<void> 
       sendJson(res, 400, { error: 'invalid json body' });
       return;
     }
+    const failKey = 'admin-fail:' + ip;
+    if (isLimited(failKey, ADMIN_FAILS_PER_IP)) {
+      sendJson(res, 429, { error: 'Too many failed attempts. Try again in 15 minutes.' });
+      return;
+    }
     const token = adminLogin(toStr(body.username, 60) ?? '', toStr(body.password, 200) ?? '');
     if (!token) {
+      recordHit(failKey, FAIL_WINDOW_MS);
+      console.warn(`[admin] failed admin login from ${ip}`);
       sendJson(res, 401, { error: 'Invalid credentials.' });
       return;
     }

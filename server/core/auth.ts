@@ -1,6 +1,7 @@
 import type { IncomingMessage } from 'node:http';
 import { db } from '../lib/db.js';
-import { header, hashPassword, isoPlusMs, nowIso, randomToken, sha1, verifyPassword } from './util.js';
+import { USER_SESSION_TTL_MS } from './schema.js';
+import { header, hashPassword, isoPlusMs, nowIso, randomToken, sha1, sha256, verifyPassword } from './util.js';
 
 export type UserRow = {
   id: number;
@@ -73,18 +74,43 @@ export function login(email: string, password: string): { token: string; user: U
   const user = findUserByEmail(email);
   if (!user) return null;
   if (!verifyPassword(password, user.password_hash)) return null;
-  const token = randomToken(32);
-  db.prepare('INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)').run(
-    token,
-    user.id,
-    nowIso(),
-  );
+  const token = createUserSession(user.id);
   touchUser(user.id);
   return { token, user };
 }
 
 export function logout(token: string): void {
-  db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+  db.prepare('DELETE FROM auth_sessions WHERE token_hash = ?').run(sha256(token));
+}
+
+/* -------------------------------- sessions -------------------------------- */
+
+/** A shared Partner login can only stay signed in on this many devices. */
+export const MAX_SESSIONS_PER_USER = 3;
+const ADMIN_SESSION_TTL_MS = 12 * 60 * 60 * 1000;
+/** Sliding expiry is pushed forward at most this often, to avoid a write per request. */
+const SESSION_TOUCH_INTERVAL_MS = 60 * 60 * 1000;
+
+function createUserSession(userId: number): string {
+  const token = randomToken(32);
+  const now = nowIso();
+  db.prepare(
+    'INSERT INTO auth_sessions (token_hash, user_id, created_at, last_used_at, expires_at) VALUES (?, ?, ?, ?, ?)',
+  ).run(sha256(token), userId, now, now, isoPlusMs(USER_SESSION_TTL_MS));
+  // Oldest sessions beyond the cap are signed out.
+  db.prepare(
+    `DELETE FROM auth_sessions WHERE user_id = ? AND rowid NOT IN
+       (SELECT rowid FROM auth_sessions WHERE user_id = ? ORDER BY rowid DESC LIMIT ?)`,
+  ).run(userId, userId, MAX_SESSIONS_PER_USER);
+  return token;
+}
+
+/** Removes expired user/admin sessions and reset tokens. Run from the cron. */
+export function purgeExpiredSessions(): void {
+  const now = nowIso();
+  db.prepare('DELETE FROM auth_sessions WHERE expires_at <= ?').run(now);
+  db.prepare('DELETE FROM admin_sessions WHERE expires_at <= ?').run(now);
+  db.prepare('DELETE FROM password_resets WHERE expires_at <= ?').run(now);
 }
 
 export function touchUser(userId: number): void {
@@ -118,7 +144,7 @@ export function resetPasswordWithToken(token: string, password: string): boolean
   db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(hashPassword(password), row.user_id);
   db.prepare('DELETE FROM password_resets WHERE token_hash = ?').run(hash);
   // Invalidate every session so anyone holding the old password is signed out.
-  db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+  db.prepare('DELETE FROM auth_sessions WHERE user_id = ?').run(row.user_id);
   return true;
 }
 
@@ -135,11 +161,20 @@ export function bearer(req: IncomingMessage): string {
 export function currentUser(req: IncomingMessage): UserRow | null {
   const token = bearer(req);
   if (!token) return null;
-  const row = db
-    .prepare(
-      'SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id WHERE s.token = ?',
-    )
-    .get(token) as UserRow | undefined;
+  const hash = sha256(token);
+  const now = Date.now();
+  const session = db
+    .prepare('SELECT user_id, last_used_at FROM auth_sessions WHERE token_hash = ? AND expires_at > ?')
+    .get(hash, new Date(now).toISOString()) as { user_id: number; last_used_at: string } | undefined;
+  if (!session) return null;
+  if (now - new Date(session.last_used_at).getTime() > SESSION_TOUCH_INTERVAL_MS) {
+    db.prepare('UPDATE auth_sessions SET last_used_at = ?, expires_at = ? WHERE token_hash = ?').run(
+      new Date(now).toISOString(),
+      isoPlusMs(USER_SESSION_TTL_MS),
+      hash,
+    );
+  }
+  const row = db.prepare('SELECT * FROM users WHERE id = ?').get(session.user_id) as UserRow | undefined;
   return row ?? null;
 }
 
@@ -156,20 +191,26 @@ export function adminLogin(username: string, password: string): string | null {
   if (username.trim().toLowerCase() !== expectedUser.value.toLowerCase()) return null;
   if (!verifyPassword(password, expectedHash.value)) return null;
   const token = randomToken(32);
-  db.prepare('INSERT INTO admin_tokens (token, created_at) VALUES (?, ?)').run(token, nowIso());
+  db.prepare('INSERT INTO admin_sessions (token_hash, created_at, expires_at) VALUES (?, ?, ?)').run(
+    sha256(token),
+    nowIso(),
+    isoPlusMs(ADMIN_SESSION_TTL_MS),
+  );
   return token;
 }
 
 export function isAdmin(req: IncomingMessage): boolean {
   const token = header(req, 'x-admin-token');
   if (!token) return false;
-  const row = db.prepare('SELECT 1 FROM admin_tokens WHERE token = ?').get(token);
+  const row = db
+    .prepare('SELECT 1 FROM admin_sessions WHERE token_hash = ? AND expires_at > ?')
+    .get(sha256(token), nowIso());
   return Boolean(row);
 }
 
 export function adminLogout(req: IncomingMessage): void {
   const token = header(req, 'x-admin-token');
-  if (token) db.prepare('DELETE FROM admin_tokens WHERE token = ?').run(token);
+  if (token) db.prepare('DELETE FROM admin_sessions WHERE token_hash = ?').run(sha256(token));
 }
 
 /** Scheduled job: any PARTNER whose window has passed falls back to MEMBER. */

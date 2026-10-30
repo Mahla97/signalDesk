@@ -186,6 +186,25 @@ async function main(): Promise<void> {
   const meUser = me.json.user as { plan: string } | null;
   check('new account starts as a Member', meUser?.plan === 'MEMBER', meUser);
 
+  /* --------------------------------- sessions -------------------------------- */
+  console.log('\nsessions');
+  const capEmail = `cap_${stamp}@example.com`;
+  const capSignup = await post('/api/auth/signup', { email: capEmail, password: 'StrongPass123' });
+  const firstToken = String(capSignup.json.token ?? '');
+  const laterTokens: string[] = [];
+  for (let i = 0; i < 3; i += 1) {
+    const l = await post('/api/auth/login', { email: capEmail, password: 'StrongPass123' });
+    laterTokens.push(String(l.json.token ?? ''));
+  }
+  const evicted = await get('/api/auth/me', { Authorization: 'Bearer ' + firstToken });
+  check('oldest session is signed out past the 3-session cap', evicted.json.user === null, evicted.json);
+  const newestToken = laterTokens[laterTokens.length - 1];
+  const newest = await get('/api/auth/me', { Authorization: 'Bearer ' + newestToken });
+  check('newest session stays signed in', Boolean(newest.json.user), newest.json);
+  await post('/api/auth/logout', {}, { Authorization: 'Bearer ' + newestToken });
+  const afterLogout = await get('/api/auth/me', { Authorization: 'Bearer ' + newestToken });
+  check('logout revokes the session token', afterLogout.json.user === null, afterLogout.json);
+
   /* ------------------------------ password reset ----------------------------- */
   console.log('\npassword reset');
   const resetEmail = `reset_${stamp}@example.com`;

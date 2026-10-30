@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { lazy, Suspense, useEffect } from 'react';
 import {
   BrowserRouter,
   Navigate,
@@ -17,9 +17,15 @@ import Settings from './pages/Settings';
 import Contact from './pages/Contact';
 import Profile from './pages/Profile';
 import ResetPassword from './pages/ResetPassword';
-import Admin from './pages/Admin';
 import { StoreProvider, useStore } from './lib/store';
 import { addNotificationTapListener } from './lib/nativePush';
+
+// The admin panel only exists when a secret path is configured at build time.
+// Builds without VITE_ADMIN_PATH (e.g. the Android app) have no admin route.
+const ADMIN_PATH = (import.meta.env.VITE_ADMIN_PATH ?? '').replace(/\/+$/, '');
+// Written as a direct env check so the bundler drops the Admin chunk entirely
+// from builds without an admin path (the Play app ships no admin code).
+const Admin = import.meta.env.VITE_ADMIN_PATH ? lazy(() => import('./pages/Admin')) : null;
 
 /** Opens signal details when the app is launched from a notification deep link. */
 function DeepLinkHandler(): null {
@@ -61,7 +67,7 @@ function DeepLinkHandler(): null {
 function Shell(): React.ReactElement {
   const { onboarded } = useStore();
   const location = useLocation();
-  const isAdminRoute = location.pathname.startsWith('/admin');
+  const isAdminRoute = ADMIN_PATH !== '' && location.pathname === ADMIN_PATH;
   const isResetRoute = location.pathname.startsWith('/reset-password');
 
   if (isResetRoute) {
@@ -72,11 +78,11 @@ function Shell(): React.ReactElement {
     return <Onboarding />;
   }
 
-  if (isAdminRoute) {
+  if (isAdminRoute && Admin) {
     return (
-      <Routes>
-        <Route path="/admin" element={<Admin />} />
-      </Routes>
+      <Suspense fallback={null}>
+        <Admin />
+      </Suspense>
     );
   }
 

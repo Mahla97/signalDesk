@@ -19,7 +19,7 @@ admin publishes a signal  →  SQLite  →  per-device delivery queue  →  FCM 
 
 - End users see a live feed, a position-size calculator, and closed-signal history.
 - A Member/Partner model gates how many signals are readable and how many pushes go out.
-- Staff manage everything from an admin panel (same app, `/admin` route).
+- Staff manage everything from an admin panel at a secret path (`VITE_ADMIN_PATH`); no link to it in the app.
 
 ## 2. Stack
 
@@ -48,8 +48,8 @@ npm run server
 npm run dev
 ```
 
-Open **http://localhost:5173**. Admin panel: **http://localhost:5173/admin**
-(login `admin` / `Kx7-Panel-Trade-92` by default — see §5).
+Open **http://localhost:5173**. Admin panel: **http://localhost:5173<VITE_ADMIN_PATH>** (set in `.env.development.local`)
+(dev seed login `admin` / `Kx7-Panel-Trade-92`; rotate with `npm run admin:credentials` — see §5).
 
 All data lives in `server/data/app.db` (gitignored). Anything you publish/edit
 survives a restart.
@@ -72,8 +72,32 @@ $HOME/Library/Android/sdk/platform-tools/adb install -r app/build/outputs/apk/de
 
 The native shell's WebView origin is `https://localhost`, so a relative `/api`
 call has nothing to resolve against — that's why the origin must be baked in.
-Cleartext `http://` is allowed in debug only (`capacitor.config.ts` +
-`android/app/src/debug/AndroidManifest.xml`).
+Cleartext `http://` is allowed in debug only: `CAPACITOR_ALLOW_MIXED_CONTENT`
+(`capacitor.config.ts`) plus `android/app/src/debug/res/xml/network_security_config.xml`,
+which overrides the strict release config in `src/main/res/xml/`. The release
+config forbids cleartext and trusts only system CAs.
+
+WebView remote debugging (`chrome://inspect`) is **off in every build** unless you
+run `CAPACITOR_WEB_DEBUG=true npx cap sync android` for a debug session.
+
+### Google Play build
+
+```bash
+VITE_API_BASE_URL=https://<backend> npm run build:play   # vite build + cap sync android
+```
+
+`VITE_STORE_BUILD=play` (`src/lib/flags.ts` → `IS_PLAY_BUILD`) removes every
+"Join Our Team" / "How to become a Partner" call to action **and the Telegram
+link** (Partner access is sold on Telegram), because Play's
+Payments policy forbids steering users to an outside payment for in-app content.
+Partners just sign in. `vite.config.ts` aborts a Play build if `VITE_ADMIN_PATH`
+is set or the API URL isn't `https://`. Builds without `VITE_ADMIN_PATH` contain
+no Admin code at all (the lazy chunk is dropped). Signing: see `docs/DEPLOYMENT.md` §4.
+
+Admin-controlled content still reaches the Play app: the **announcement banner**
+and the **Website / Instagram links**. Keep them free of prices, "become a
+Partner", and Telegram links (checklist: `docs/DEPLOYMENT.md` §6.5). The
+`t.me` default in `store.tsx` stays in the bundle but is never rendered.
 
 ## 4. Scripts
 
@@ -81,12 +105,18 @@ Cleartext `http://` is allowed in debug only (`capacitor.config.ts` +
 | --- | --- |
 | `npm run dev` | Vite dev server |
 | `npm run build` | Production build into `dist/` |
+| `npm run build:play` | Google Play build (`VITE_STORE_BUILD=play`) + `cap sync android` |
 | `npm run preview` | Serve the built app |
 | `npm run server` | Start the API (`server/index.ts` via tsx) |
-| `npm run test:api` | Full API suite (61 checks) against a live server |
+| `npm run test:api` | Full API suite (64 checks) against a live server |
 | `npm run test:admin` | Admin add/edit/delete lifecycle suite (14 checks) |
+| `npm run admin:credentials` | Rotate admin username/password (`ADMIN_USERNAME`/`ADMIN_PASSWORD` env) and revoke all admin sessions |
 
 Tests run against a **live server** and write real rows — use a disposable DB.
+Export the admin creds first (`set -a; . ~/.config/signaldesk/admin-credentials.txt; set +a`).
+Wait ~1 minute between back-to-back `test:api` runs: one run nearly uses the
+per-IP signup (10/min) and login (15/min) budgets. Rate-limit counters are
+in-memory, so restarting the server clears them.
 
 ## 5. Environment variables
 
@@ -102,6 +132,7 @@ start on the guessable default, so `ADMIN_PASSWORD` becomes mandatory.
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | Path to the Firebase service-account JSON → enables FCM push. |
 | `FCM_SERVICE_ACCOUNT_JSON` | — | Alternative: the service-account JSON **inline** (no file). |
 | `PORT` | `3001` | API port. |
+| `TRUST_PROXY_HOPS` | `0` | How many reverse proxies sit in front of Node. `0` = ignore `X-Forwarded-For` (client-forgeable). Set `1` behind a single Caddy/nginx/PaaS router, or every user shares the proxy's rate-limit bucket. |
 | `APP_URL` | `http://localhost:5173` | Public origin used to build password-reset links. |
 | `SMTP_HOST` | — | SMTP host for password-reset email. When unset, the reset link is logged instead of emailed. |
 | `SMTP_PORT` | `587` | SMTP port. |
@@ -115,10 +146,15 @@ Client-side (build-time):
 | Variable | Purpose |
 | --- | --- |
 | `VITE_API_BASE_URL` | Absolute API origin for the native build (`import.meta.env.VITE_API_BASE_URL`). |
+| `VITE_ADMIN_PATH` | Secret admin route (e.g. `/ops-<random>`). Unset = no admin route and no Admin code in the bundle (Android build). Dev value lives in gitignored `.env.development.local`. |
+| `VITE_STORE_BUILD` | `play` = Google Play build: hides Partner calls to action and the Telegram link. Set by `npm run build:play`. |
 | `API_PROXY_TARGET` | Dev-only: where Vite proxies `/api` (default `http://localhost:3001`). |
+| `CAPACITOR_ALLOW_MIXED_CONTENT` | `true` before `cap sync` for a debug build against an `http://` backend. Never for release. |
+| `CAPACITOR_WEB_DEBUG` | `true` before `cap sync` to allow `chrome://inspect`. Never for release. |
+| `SIGNING_STORE_FILE` · `SIGNING_STORE_PASSWORD` · `SIGNING_KEY_ALIAS` · `SIGNING_KEY_PASSWORD` | Gradle upload-key signing. Unset = unsigned release build. |
 
 Changing `ADMIN_PASSWORD` after first boot has no effect — the hash is already
-in the `settings` table. Delete the `admin_password_hash` row (or the DB) to re-seed.
+in the `settings` table. Rotate with `npm run admin:credentials` (or delete the `admin_password_hash` row / the DB to re-seed).
 
 ## 6. Firebase — two separate halves
 
@@ -133,8 +169,8 @@ Firebase push has a **client half** and a **server half**; both must be present.
    server signs a JWT, exchanges it for an OAuth token, and posts to
    `https://fcm.googleapis.com/v1/projects/<project>/messages:send`.
 
-The service account lives at `docs/signaldesk-adb5b-firebase-adminsdk-*.json`
-(gitignored). Without it, `transportSend` no-ops: jobs are marked `SENT` but
+The dev service account lives at `~/.config/signaldesk/firebase-service-account.json`
+(outside the repo). Without it, `transportSend` no-ops: jobs are marked `SENT` but
 nothing is pushed. The web app still gets signals by polling
 `/notifications/pending`; **Android does not poll** — see §11 for the caveat.
 
@@ -146,7 +182,7 @@ server/
   lib/db.ts           SQLite handle — PLATFORM-MANAGED, do not edit
   core/
     schema.ts         tables, migrations, settings, sample data
-    auth.ts           users, sessions, admin tokens, Partner expiry job
+    auth.ts           users, hashed sessions (expiry + cap), admin sessions, Partner expiry job
     signals.ts        ingestion, edit + change log, soft-delete, redaction
     distribution.ts   eligibility, queue, worker, FCM transport
     util.ts           JSON/HTTP helpers, hashing, rate limiting
@@ -173,11 +209,18 @@ docs/                docs (this file, ARCHITECTURE, firebase keys)
 2. Additive column migrations (e.g. `signals.deleted_at`).
 3. `delivery_jobs` rebuilds when its shape/unique-key changes.
 
-Tables: `users`, `sessions`, `admin_tokens`, `devices`, `signals`,
-`signal_edits`, `delivery_jobs`, `settings`.
+Tables: `users`, `auth_sessions`, `admin_sessions`, `password_resets`, `devices`,
+`signals`, `signal_edits`, `delivery_jobs`, `settings`.
 
 Key facts:
 
+- **Sessions store only `sha256(token)`**, never the raw token, so a leaked DB
+  holds no usable logins. User sessions: 30-day sliding expiry (`expires_at`
+  pushed forward at most hourly), max **3 per user** (oldest signed out —
+  `MAX_SESSIONS_PER_USER` in `auth.ts`). Admin sessions: fixed 12h. The
+  once-a-minute cron purges expired sessions and reset tokens. The legacy
+  `sessions` table was migrated (hashed, users stay signed in) and
+  `admin_tokens` dropped (admins re-login).
 - `signals.deleted_at` — soft delete. Deleting a signal sets this instead of
   removing the row, so a **DELETE notification** can still be fanned out.
 - `signals.take_profits` — JSON array of levels (TP1 → TPn); `take_profit` is
@@ -230,7 +273,7 @@ The feed does **not** wait for a manual reload:
 
 - **Android does not poll `/notifications/pending`.** Native relies entirely on
   FCM. Without a server service account, Android gets nothing while the app runs
-  (the README's claim that it "drains the queue while running" is wrong).
+  (the feed still refreshes via its 30s poll of `/api/signals`).
 - **Emulator FCM needs working DNS.** If pushes never arrive and logcat shows
   `Firebase Installations Service is unavailable`, boot the emulator with
   `-dns-server <your-dns>`.
@@ -244,7 +287,7 @@ The feed does **not** wait for a manual reload:
 
 ## 12. Not implemented (on purpose)
 
-- **Partner access.** Activating Partner status is manual: staff flip the tier in the admin panel.
+- **Partner access.** Activating Partner status is manual: users pay on Telegram, staff flip the tier in the admin panel. The Play build never says how to get it (Payments policy).
 - **iOS wrapper.** Only Android is wrapped (Capacitor project exists, iOS not added).
 - **Other channels** (Telegram, e-mail). The transport is pluggable
   (`distribution.ts`) but only FCM + device pull exist.
@@ -283,6 +326,14 @@ The feed does **not** wait for a manual reload:
 - Password reset: `forgot-password` / `reset-password` endpoints + email link (SMTP) + a `/reset-password` screen.
 - Privacy policy: added `docs/PRIVACY_POLICY.md` + a Settings → Privacy Policy link (configurable `privacy_policy_url`).
 - Announcement banner: admin can write/toggle an announcement (Admin → Settings); it shows at the top of the feed and each user can dismiss it locally.
+- Admin hardening: removed the "Staff access" footer link; admin route moved from `/admin` to a secret build-time `VITE_ADMIN_PATH` (absent from the Android build); `npm run admin:credentials` rotates username/password and revokes all admin sessions.
+- **Release security pass (P0):**
+  - Rate limits: `X-Forwarded-For` is only trusted via `TRUST_PROXY_HOPS` (it was spoofable, which bypassed every limit). Buckets no longer wipe at 5,000 keys. Failed-login budgets (successes never count): 10 per email / 30 per IP per 15 min, admin 5 per IP per 15 min (failures logged). Forgot-password: 3 per email per hour, plus 20 per IP per 15 min (was 5). Reset-password: 10 per IP per 15 min.
+  - Sessions hashed + expiring + capped (see §8). Admin UI returns to its login form on a 401 (`ADMIN_SESSION_EXPIRED` event in `api.ts`).
+  - Android: network security config (release: HTTPS + system CAs only; debug override allows cleartext and user CAs); removed the now-ignored debug-manifest cleartext flag; WebView debugging off unless `CAPACITOR_WEB_DEBUG=true`; explicit `debuggable false`; env-based upload-key signing.
+  - Play build flag (`npm run build:play`) + Vite guard; Admin chunk excluded when there's no admin path. The Play build also hides the Telegram contact link (Partner access is sold there).
+  - Docs synced: README, ARCHITECTURE (security section), DEPLOYMENT (§6.5 Payments policy, signing env vars, `TRUST_PROXY_HOPS`), PRIVACY_POLICY (session/IP wording, correct Telegram handle).
+  - Dev admin credentials and admin path rotated (old ones were exposed).
 
 ## 14. Before Google Play release — checklist
 
@@ -298,11 +349,15 @@ Code fixes are done; these items need console/account access and are not yet don
 - **Financial-services policy review.** Trading-signal content may require a
   financial-services declaration/review — confirm eligibility before submit.
 - **Restrict the Firebase Android API key.** `android/app/google-services.json`
-  ships in the APK; lock its API key to this app's package + SHA-1 in Google
-  Cloud Console so it cannot be abused elsewhere.
-- **Play App Signing + release keystore.** Create a release signing key and
-  enroll in Play App Signing; set the signing config in `build.gradle` (or use a
-  keystore properties file) so `:app:assembleRelease` produces a signed, uploadable AAB/APK.
+  ships in the APK; lock its API key to this app's package + SHA-1 fingerprints
+  (upload key and Play app-signing key) in Google Cloud Console so it cannot be
+  abused elsewhere.
+- **Play App Signing + upload keystore.** The signing config exists (env vars,
+  `docs/DEPLOYMENT.md` §4). Remaining: create the upload keystore, enroll in
+  Play App Signing, and build with `npm run build:play` → `:app:bundleRelease`.
+- **Set `TRUST_PROXY_HOPS`** on the production server (usually `1`), or all
+  users share one rate-limit bucket.
+- **Production admin credentials.** Generate fresh ones for prod; never reuse dev values.
 
 ---
 
