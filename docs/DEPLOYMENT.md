@@ -73,6 +73,7 @@ you also want the web app at a URL, serve `dist/` separately and proxy `/api`.
 | `ADMIN_PASSWORD` | **yes** | Server refuses to boot on the default. |
 | `APP_URL` | yes | Public origin used to build password-reset links. |
 | `PORT` | no | Default `3001`. |
+| `TRUST_PROXY_HOPS` | **yes behind a proxy** | Number of reverse proxies in front of Node (`1` for a single Caddy/nginx/Railway router). Rate limiting uses the client IP; without this every user looks like the proxy's IP. Unset = `X-Forwarded-For` is ignored (it's client-forgeable). With Cloudflare in front of nginx, use `2`. |
 | `SMTP_HOST` · `SMTP_PORT` · `SMTP_SECURE` · `SMTP_USER` · `SMTP_PASS` · `SMTP_FROM` | yes (for reset email) | `SMTP_FROM` must be a domain verified in your email provider. |
 | `GOOGLE_APPLICATION_CREDENTIALS` or `FCM_SERVICE_ACCOUNT_JSON` | no (push) | Enables FCM push; without it Android gets no notifications. |
 
@@ -99,10 +100,11 @@ Keep it running with `pm2` (or systemd) and put HTTPS in front with Caddy or ngi
 
 ### 3.5 After the backend is up
 
-- Build the APK with the backend URL baked in:
+- Build the Play app with the backend URL baked in. `build:play` hides every
+  "become a Partner" prompt and the Telegram link (Play Payments policy, §6.5) and
+  refuses to build if `VITE_ADMIN_PATH` is set or the URL isn't `https://`:
   ```bash
-  VITE_API_BASE_URL=https://your-backend.com npm run build
-  npx cap sync android
+  VITE_API_BASE_URL=https://your-backend.com npm run build:play   # vite build + cap sync
   ```
 - Sign in to the admin panel (secret `VITE_ADMIN_PATH`), delete the sample signals, and set the contact links.
 
@@ -110,42 +112,29 @@ Keep it running with `pm2` (or systemd) and put HTTPS in front with Caddy or ngi
 
 ## 4. Release build & signing
 
-There is currently **no signing config**, so `assembleRelease` won't produce an
-uploadable artifact yet. Steps:
+`android/app/build.gradle` reads the upload key from environment variables.
+Without them, `assembleRelease` produces an **unsigned** APK (fine for checks,
+not uploadable).
 
-### 4.1 Create a release keystore (once)
+### 4.1 Create an upload keystore (once)
 
 ```bash
 keytool -genkey -v \
-  -keystore signaldesk-release.jks \
+  -keystore signaldesk-upload.jks \
   -alias signaldesk \
   -keyalg RSA -keysize 2048 -validity 10000
 ```
 
-Store the keystore and passwords somewhere safe (not in git).
+Keep the keystore and passwords outside the repo (password manager / CI secrets).
 
-### 4.2 Add a signing config to `android/app/build.gradle`
+### 4.2 Signing env vars
 
-```gradle
-android {
-    signingConfigs {
-        release {
-            storeFile file("../signaldesk-release.jks")
-            storePassword System.getenv("SIGNALDESK_KEYSTORE_PASSWORD")
-            keyAlias "signaldesk"
-            keyPassword System.getenv("SIGNALDESK_KEY_PASSWORD")
-        }
-    }
-    buildTypes {
-        release {
-            signingConfig signingConfigs.release
-            minifyEnabled true
-            shrinkResources true
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-    }
-}
-```
+| Variable | Value |
+| --- | --- |
+| `SIGNING_STORE_FILE` | Absolute path to the `.jks` |
+| `SIGNING_STORE_PASSWORD` | Keystore password |
+| `SIGNING_KEY_ALIAS` | `signaldesk` |
+| `SIGNING_KEY_PASSWORD` | Key password |
 
 ### 4.3 Build the uploadable AAB
 
@@ -153,7 +142,8 @@ android {
 cd android
 JAVA_HOME=/opt/homebrew/opt/openjdk@21 \
   ANDROID_HOME=$HOME/Library/Android/sdk \
-  SIGNALDESK_KEYSTORE_PASSWORD=... SIGNALDESK_KEY_PASSWORD=... \
+  SIGNING_STORE_FILE=$HOME/keys/signaldesk-upload.jks \
+  SIGNING_STORE_PASSWORD=... SIGNING_KEY_ALIAS=signaldesk SIGNING_KEY_PASSWORD=... \
   ./gradlew :app:bundleRelease
 ```
 
@@ -162,8 +152,8 @@ Output: `android/app/build/outputs/bundle/release/app-release.aab`.
 ### 4.4 Play App Signing
 
 Enroll in **Play App Signing** in the Play Console, then upload the AAB. Google
-manages the release key from then on. Keep your keystore safe regardless — you
-need it to upload future updates.
+holds the app signing key; yours is only the **upload** key, so a leaked upload
+key can be reset through Play support. Keep it safe regardless.
 
 ---
 
@@ -195,11 +185,13 @@ need it to upload future updates.
 
 Declare what the app collects. SignalDesk collects:
 - Email + password (account)
-- Device push token
+- Device ID (per-install) + device push token
 - Timezone
 
-No precise location, no third-party ad networks. Declare honestly — the form
-must match the app's actual behavior.
+Data is encrypted in transit (HTTPS only), and users can delete their account in the app.
+The client IP is used in memory for rate limiting and not stored, so it doesn't need
+declaring as collected. No precise location, no third-party ad networks. Declare honestly
+— the form must match the app's actual behavior.
 
 ### 6.3 Account-deletion URL
 
@@ -213,13 +205,35 @@ Trading-signal content may trigger Google's **Financial services** declaration.
 Confirm eligibility before submit — some regions restrict this category or need
 extra licensing disclosures.
 
+### 6.5 Payments policy (no steering)
+
+Partner access is sold outside the app (Telegram). Play forbids pointing users at
+an outside payment for content that unlocks in the app. So the Play build
+(`npm run build:play`) is "sign-in only":
+
+- no "Join Our Team" / "How to become a Partner" prompts;
+- no Telegram link anywhere (Contact keeps Website, Instagram, e-mail);
+- locked signals only say "Already a Partner? Sign in".
+
+Things only you can keep clean:
+- **Announcement banner** (Admin → Settings) shows in the Play app too. Never put
+  prices, "become a Partner", or a Telegram link in it.
+- **Website / Instagram links** stay in the Play app. If those pages sell Partner
+  access, the reviewer can treat them as steering too. Point them at pages without a
+  purchase path, or blank them in Admin → Settings before review.
+- **Store listing text** must not mention buying Partner access.
+
 ---
 
 ## 7. Firebase security
 
 `android/app/google-services.json` ships inside the APK. **Restrict its API key**
-in Google Cloud Console to this app's package (`com.signaldesk.app`) + SHA-1, so
-the key can't be abused elsewhere.
+in Google Cloud Console to this app's package (`com.signaldesk.app`) + the SHA-1
+fingerprints of **both** the upload key and the Play app-signing key (Play Console →
+App integrity), so the key can't be abused elsewhere.
+
+The server-side **service account** is a private key: keep it out of the repo and
+the APK, give it only the FCM sender role, and rotate it if it was ever copied around.
 
 ---
 
@@ -248,9 +262,9 @@ the key can't be abused elsewhere.
 ## 9. Launch checklist (ordered)
 
 - [ ] Provision a backend URL (domain or PaaS) + HTTPS
-- [ ] Deploy the backend with production env vars (incl. FCM + SMTP)
+- [ ] Deploy the backend with production env vars (incl. FCM + SMTP + `TRUST_PROXY_HOPS`)
 - [ ] Host the privacy policy; set its URL in the app + Play listing
-- [ ] Create release keystore + signing config; build the AAB
+- [ ] Create upload keystore; set the `SIGNING_*` env vars; `npm run build:play`; build the AAB
 - [ ] Enroll in Play App Signing
 - [ ] Register Play Console account ($25); create the app
 - [ ] Complete store listing (description, screenshots, icon, feature graphic)
@@ -258,6 +272,7 @@ the key can't be abused elsewhere.
 - [ ] Add account-deletion web URL
 - [ ] Restrict the Firebase API key
 - [ ] Financial-services declaration
+- [ ] Payments-policy check (§6.5): announcement, website/Instagram links, store listing
 - [ ] Admin-side prep (§8)
 - [ ] Upload AAB → internal testing → production
 

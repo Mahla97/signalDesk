@@ -23,8 +23,9 @@ distribution service ──► delivery_jobs (one row per eligible device)
 background worker (every 3s) ──► transport ──► device
       │  retry with exponential backoff, disables invalid tokens
       ▼
-mobile app  ──► GET /api/notifications/pending ──► system notification
-            ──► GET /api/signals/:id            ──► full details
+Android app ◄── FCM push (needs the server service account; Android never polls)
+web app     ──► GET /api/notifications/pending ──► browser notification
+both        ──► GET /api/signals/:id            ──► full details
 ```
 
 | Layer | File |
@@ -32,12 +33,13 @@ mobile app  ──► GET /api/notifications/pending ──► system notificati
 | HTTP router / controllers | `server/index.ts` |
 | Signal service + repository | `server/core/signals.ts` |
 | Distribution, eligibility, worker, transport | `server/core/distribution.ts` |
-| Auth, sessions, admin tokens, PARTNER expiry job | `server/core/auth.ts` |
-| Schema, settings, seed | `server/core/schema.ts` |
-| Helpers (JSON, hashing, rate limit, routing) | `server/core/util.ts` |
+| Auth, hashed sessions (expiry + 3-per-user cap), admin sessions, PARTNER expiry job | `server/core/auth.ts` |
+| Schema, migrations, settings, seed | `server/core/schema.ts` |
+| Helpers (JSON, hashing, rate limit, client IP, routing) | `server/core/util.ts` |
 | Database handle (platform-managed) | `server/lib/db.ts` |
 | React client | `src/` |
-| Admin panel | `src/pages/Admin.tsx` (secret route `VITE_ADMIN_PATH`) |
+| Admin panel | `src/pages/Admin.tsx` (secret route `VITE_ADMIN_PATH`; not bundled without it) |
+| Play-build flag | `src/lib/flags.ts` (`IS_PLAY_BUILD`) |
 
 **Stack**: Node (built-in `http` + `node:sqlite`) · React 19 + Vite 6 +
 Tailwind v4 · SQLite (WAL) · no external services required.
@@ -55,6 +57,9 @@ Tailwind v4 · SQLite (WAL) · no external services required.
 | `ADMIN_USERNAME` | no | `admin` | Only read on the very first boot. |
 | `ADMIN_PASSWORD` | no | `Kx7-Panel-Trade-92` | Only read on the very first boot; stored hashed. |
 | `GOOGLE_APPLICATION_CREDENTIALS` | no | — | Path to the Firebase service-account JSON. When set, deliveries are pushed via FCM HTTP v1; otherwise they are queued for the device to pull. |
+| `TRUST_PROXY_HOPS` | behind a proxy | `0` | Reverse proxies in front of Node. `0` ignores `X-Forwarded-For` (forgeable); set `1` behind one proxy so rate limits see real client IPs. |
+
+Full list (SMTP, `APP_URL`, build-time `VITE_*`, signing): `docs/HANDOFF.md` §5.
 
 ---
 
@@ -64,16 +69,22 @@ Migrations run at startup from `SCHEMA_SQL` in `server/core/schema.ts`
 (idempotent `CREATE TABLE IF NOT EXISTS`). The file lives in `server/data/app.db`,
 the only directory that survives a redeploy.
 
-Tables: `users`, `sessions`, `admin_tokens`, `devices`, `signals`,
-`delivery_jobs`, `settings`.
+Tables: `users`, `auth_sessions`, `admin_sessions`, `password_resets`, `devices`,
+`signals`, `signal_edits`, `delivery_jobs`, `settings`.
 
 Indexes: `signals(external_signal_id)`, `signals(symbol)`,
 `signals(signal_timestamp DESC)`, `signals(status, closed_at DESC)`,
-`delivery_jobs(status, next_attempt_at)`, `delivery_jobs(device_id, status, created_at DESC)`.
+`delivery_jobs(status, next_attempt_at)`, `delivery_jobs(device_id, status, created_at DESC)`,
+`auth_sessions(user_id, created_at DESC)`.
 
 Idempotency: `signals.external_signal_id` is UNIQUE and
-`delivery_jobs(signal_id, device_id)` is UNIQUE — a repeated save creates
-neither a second row nor a second push.
+`delivery_jobs(signal_id, device_id, revision, kind)` is UNIQUE — a repeated save creates
+neither a second row nor a second push, while NEW / UPDATE / DELETE notices for
+the same signal can coexist.
+
+Sessions: both session tables store only `sha256(token)`. User sessions expire
+after 30 days without use; admin sessions after 12 hours. The minute cron purges
+expired sessions and reset tokens.
 
 ---
 
@@ -89,7 +100,10 @@ npm run dev        # web client
 ### Production
 The platform builds the client with `vite build` and runs `server/index.ts`
 with `tsx`, injecting `PORT`. Set `ADMIN_PASSWORD` before the first boot in the
-project's environment settings. Traffic is served over HTTPS by the platform.
+project's environment settings. Traffic is served over HTTPS by the platform, so
+also set `TRUST_PROXY_HOPS=1`.
+
+The Google Play app is built with `npm run build:play` (see `docs/DEPLOYMENT.md`).
 
 Before going live: sign in to the admin panel → **Signals** → *Delete sample data*, and
 set the real Telegram / website / Instagram links under **Settings**.
@@ -136,13 +150,23 @@ Client requests carry `x-device-token` (per-install id) and, when signed in,
 
 ## 7. Security
 
-- Rate limits: login 15/min, signup 10/min, admin 10/min.
+- **Rate limits** (in-memory, per client IP from `clientIp()`):
+  - Per minute: login 15, signup 10, admin login 10.
+  - Failed logins only (15-min window): 10 per email, 30 per IP; admin 5 per IP, each failure logged.
+  - Forgot-password: 3 per email per hour, 20 per IP per 15 min. Reset-password: 10 per IP per 15 min.
+  - `X-Forwarded-For` is ignored unless `TRUST_PROXY_HOPS` is set, so clients can't fake their IP.
+- **Sessions**: random 256-bit tokens, stored as `sha256` only. Users: 30-day
+  sliding expiry, max 3 per account (oldest signed out). Admin: 12h. Password
+  reset signs out every session. The admin UI returns to its login form on a 401.
 - Strict payload validation and a 256 KB body cap.
-- Passwords hashed with scrypt + per-user salt.
+- Passwords hashed with scrypt + per-user salt, compared in constant time.
 - Every admin route passes through one `requireAdmin` guard — hiding the UI is
   never the protection.
 - Parameterised SQL everywhere; no string interpolation of user input.
-- HTTPS is terminated by the platform.
+- HTTPS is terminated by the platform. The Android release build allows HTTPS
+  only and trusts system CAs only (`network_security_config.xml`). WebView
+  debugging is off, and `allowBackup` is false.
+- The Play build ships no admin code and no Partner / Telegram calls to action.
 
 ---
 
@@ -162,6 +186,7 @@ npm run test:api      # shell 2
 | Member vs Partner | anonymous treated as a Member · locked items present · locked detail returns 403 · Partner sees everything unlocked · Partner can open any detail |
 | History | closed signals never locked |
 | Auth | weak password rejected · signup · duplicate email rejected · wrong password rejected · new user starts MEMBER |
+| Sessions | oldest session signed out past the 3-session cap · newest stays valid · logout revokes the token |
 | Admin | unauthenticated 401 · wrong credentials 401 · login · list users · grant Partner with duration · downgrade · read logs |
 | Queue | notification queued for the device · payload carries `type=TRADING_SIGNAL` + `signalId` · ack removes it |
 
@@ -169,3 +194,8 @@ Manual checks worth running once: set `member_visible_count` to 1, publish two
 signals, and confirm the second is blurred and its push is generic; grant a user
 7 days of Partner and confirm the profile countdown; wait for a `partnerEndAt` to pass
 and confirm the minute-interval job downgrades the account.
+
+Rate limits are deliberately **not** in the suite: tripping them would lock the
+test machine's IP out of later runs. Check them by hand against a dev server,
+then restart it to clear the counters. Leave ~1 minute between back-to-back
+suite runs.
