@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "server": "tsx server/index.ts",
     "test:api": "tsx server/tests/api.test.ts",
-    "test:admin": "tsx server/tests/admin-signals.test.ts"
+    "test:admin": "tsx server/tests/admin-signals.test.ts",
+    "admin:credentials": "tsx server/scripts/set-admin.ts"
   },
   "dependencies": {
     "@capacitor-firebase/messaging": "^8.5.1",

@@ -19,7 +19,7 @@ admin publishes a signal  →  SQLite  →  per-device delivery queue  →  FCM 
 
 - End users see a live feed, a position-size calculator, and closed-signal history.
 - A Member/Partner model gates how many signals are readable and how many pushes go out.
-- Staff manage everything from an admin panel (same app, `/admin` route).
+- Staff manage everything from an admin panel at a secret path (`VITE_ADMIN_PATH`); no link to it in the app.
 
 ## 2. Stack
 
@@ -48,8 +48,8 @@ npm run server
 npm run dev
 ```
 
-Open **http://localhost:5173**. Admin panel: **http://localhost:5173/admin**
-(login `admin` / `Kx7-Panel-Trade-92` by default — see §5).
+Open **http://localhost:5173**. Admin panel: **http://localhost:5173<VITE_ADMIN_PATH>** (set in `.env.development.local`)
+(dev seed login `admin` / `Kx7-Panel-Trade-92`; rotate with `npm run admin:credentials` — see §5).
 
 All data lives in `server/data/app.db` (gitignored). Anything you publish/edit
 survives a restart.
@@ -115,6 +115,7 @@ Client-side (build-time):
 | Variable | Purpose |
 | --- | --- |
 | `VITE_API_BASE_URL` | Absolute API origin for the native build (`import.meta.env.VITE_API_BASE_URL`). |
+| `VITE_ADMIN_PATH` | Secret admin route (e.g. `/ops-<random>`). Unset = no admin route (Android build). Dev value lives in gitignored `.env.development.local`. |
 | `API_PROXY_TARGET` | Dev-only: where Vite proxies `/api` (default `http://localhost:3001`). |
 
 Changing `ADMIN_PASSWORD` after first boot has no effect — the hash is already
@@ -283,6 +284,7 @@ The feed does **not** wait for a manual reload:
 - Password reset: `forgot-password` / `reset-password` endpoints + email link (SMTP) + a `/reset-password` screen.
 - Privacy policy: added `docs/PRIVACY_POLICY.md` + a Settings → Privacy Policy link (configurable `privacy_policy_url`).
 - Announcement banner: admin can write/toggle an announcement (Admin → Settings); it shows at the top of the feed and each user can dismiss it locally.
+- Admin hardening: removed the "Staff access" footer link; admin route moved from `/admin` to a secret build-time `VITE_ADMIN_PATH` (absent from the Android build); `npm run admin:credentials` rotates username/password and revokes all admin sessions.
 
 ## 14. Before Google Play release — checklist
 

@@ -37,7 +37,7 @@ mobile app  ──► GET /api/notifications/pending ──► system notificati
 | Helpers (JSON, hashing, rate limit, routing) | `server/core/util.ts` |
 | Database handle (platform-managed) | `server/lib/db.ts` |
 | React client | `src/` |
-| Admin panel | `src/pages/Admin.tsx` (route `/admin`) |
+| Admin panel | `src/pages/Admin.tsx` (secret route `VITE_ADMIN_PATH`) |
 
 **Stack**: Node (built-in `http` + `node:sqlite`) · React 19 + Vite 6 +
 Tailwind v4 · SQLite (WAL) · no external services required.
@@ -91,7 +91,7 @@ The platform builds the client with `vite build` and runs `server/index.ts`
 with `tsx`, injecting `PORT`. Set `ADMIN_PASSWORD` before the first boot in the
 project's environment settings. Traffic is served over HTTPS by the platform.
 
-Before going live: sign in to `/admin` → **Signals** → *Delete sample data*, and
+Before going live: sign in to the admin panel → **Signals** → *Delete sample data*, and
 set the real Telegram / website / Instagram links under **Settings**.
 
 ---

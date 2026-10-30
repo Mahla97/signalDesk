@@ -104,7 +104,7 @@ Keep it running with `pm2` (or systemd) and put HTTPS in front with Caddy or ngi
   VITE_API_BASE_URL=https://your-backend.com npm run build
   npx cap sync android
   ```
-- Sign in to `/admin`, delete the sample signals, and set the contact links.
+- Sign in to the admin panel (secret `VITE_ADMIN_PATH`), delete the sample signals, and set the contact links.
 
 ---
 
@@ -226,8 +226,12 @@ the key can't be abused elsewhere.
 ## 8. Admin-side preparation (before launch)
 
 1. **Set `ADMIN_PASSWORD` (and `ADMIN_USERNAME`) before the first boot** of the
-   production server. It's hashed once; changing the env later has no effect.
-2. Sign in to `/admin` and **delete the sample signals** (Signals → *Delete
+   production server. It's hashed once; to change it later run
+   `ADMIN_USERNAME=... ADMIN_PASSWORD=... npm run admin:credentials` on the server.
+   Use a non-obvious username and a 16+ character password.
+   - **Admin path:** build the *web* app with a secret `VITE_ADMIN_PATH=/ops-<random>`.
+     Build the **Android** app *without* it, so the APK contains no admin route.
+2. Sign in to the admin panel (secret `VITE_ADMIN_PATH`) and **delete the sample signals** (Signals → *Delete
    sample data*).
 3. In **Admin → Settings**, set the real values:
    - Telegram (`@SignalDesk_com`)

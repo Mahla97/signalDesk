@@ -117,9 +117,6 @@ export default function Layout({ children }: { children: ReactNode }): React.Rea
 
       <footer className="hidden border-t border-[#161f2f] px-4 py-6 text-center text-xs text-slate-600 md:block">
         <p>SignalDesk — guidance only, not financial advice. Trading involves risk.</p>
-        <Link to="/admin" className="mt-1 inline-block text-slate-700 hover:text-slate-500">
-          Staff access
-        </Link>
       </footer>
 
       <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-[#161f2f] bg-[#0b1120]/98 backdrop-blur md:hidden safe-bottom">

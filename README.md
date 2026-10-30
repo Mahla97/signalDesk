@@ -151,18 +151,26 @@ restart.
 
 ### 5.2 Admin dashboard
 
-Open **http://localhost:5173/admin** — it is a route inside the same app, not a second server.
-Sign in with:
+The admin panel lives at a **secret path** set at build time with `VITE_ADMIN_PATH`
+(e.g. `/ops-<random>`). There is no link to it anywhere in the app. Without the variable the
+admin route does not exist — so the Android build never contains it.
 
-| Field | Default |
-| --- | --- |
-| Username | `admin` |
-| Password | `Kx7-Panel-Trade-92` |
+For local dev, put it in the gitignored `.env.development.local`:
 
-There is also a discreet **“Staff access”** link in the desktop footer (hidden on mobile).
+```bash
+VITE_ADMIN_PATH=/ops-<random>
+```
 
-Those are the defaults, hashed into the database on **first boot** from `ADMIN_USERNAME` /
-`ADMIN_PASSWORD`. Changing the variables afterwards has no effect — see §6.
+Then open `http://localhost:5173/ops-<random>`. A fresh database seeds the dev defaults
+(`admin` / `Kx7-Panel-Trade-92`); production refuses to boot on them.
+
+Rotate the credentials at any time (also revokes every admin session):
+
+```bash
+ADMIN_USERNAME=... ADMIN_PASSWORD=... npm run admin:credentials
+```
+
+The password must be at least 16 characters.
 
 ### 5.3 Android demo
 
@@ -463,10 +471,9 @@ Response: `{ signal, changes[], revision, notified }`.
 
 ## 11. Admin panel
 
-**Locally:** <http://localhost:5173/admin> — sign in as `admin` / `Kx7-Panel-Trade-92` (§5.2).
-**Deployed:** `https://YOUR-DOMAIN/admin`. Either way there is a discreet “Staff access” link in
-the desktop footer (hidden on mobile). Change the credentials via the `ADMIN_USERNAME` /
-`ADMIN_PASSWORD` variables **before the first boot**, or ask for a rotation.
+Reached only at the secret `VITE_ADMIN_PATH` (§5.2) — locally `http://localhost:5173<path>`,
+deployed `https://YOUR-DOMAIN<path>`. There is no link to it in the app. Rotate the credentials
+with `npm run admin:credentials`.
 
 | Tab | Contents |
 | --- | --- |
@@ -564,7 +571,7 @@ against the fresh database, then move all three back.
 3. **Serve both behind one HTTPS origin** so the app can keep calling relative `/api/...` paths.
 4. **Persist `server/data/`** — it holds the SQLite database.
 5. **First-run checklist:**
-   * sign in to `/admin`, delete the sample signals;
+   * sign in to the admin panel (secret `VITE_ADMIN_PATH`), delete the sample signals;
    * set the Telegram / Website / Instagram links and the support e-mail;
    * publish a test signal from the Signals tab and watch it land in the delivery logs.
 
