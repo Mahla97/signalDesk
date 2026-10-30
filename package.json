@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:play": "VITE_STORE_BUILD=play vite build && cap sync android",
     "preview": "vite preview",
     "server": "tsx server/index.ts",
     "test:api": "tsx server/tests/api.test.ts",

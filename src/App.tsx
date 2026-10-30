@@ -23,7 +23,9 @@ import { addNotificationTapListener } from './lib/nativePush';
 // The admin panel only exists when a secret path is configured at build time.
 // Builds without VITE_ADMIN_PATH (e.g. the Android app) have no admin route.
 const ADMIN_PATH = (import.meta.env.VITE_ADMIN_PATH ?? '').replace(/\/+$/, '');
-const Admin = lazy(() => import('./pages/Admin'));
+// Written as a direct env check so the bundler drops the Admin chunk entirely
+// from builds without an admin path (the Play app ships no admin code).
+const Admin = import.meta.env.VITE_ADMIN_PATH ? lazy(() => import('./pages/Admin')) : null;
 
 /** Opens signal details when the app is launched from a notification deep link. */
 function DeepLinkHandler(): null {
@@ -76,7 +78,7 @@ function Shell(): React.ReactElement {
     return <Onboarding />;
   }
 
-  if (isAdminRoute) {
+  if (isAdminRoute && Admin) {
     return (
       <Suspense fallback={null}>
         <Admin />

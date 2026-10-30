@@ -11,6 +11,11 @@ interface ImportMetaEnv {
    * is not routed at all — leave it unset for the Android build.
    */
   readonly VITE_ADMIN_PATH?: string;
+  /**
+   * `play` for the Google Play build: hides every "become a Partner" call to
+   * action (Play Payments policy). Unset for web / sideloaded builds.
+   */
+  readonly VITE_STORE_BUILD?: string;
 }
 
 interface ImportMeta {

@@ -6,6 +6,7 @@ import { Badge, Button, ErrorState, Panel, Skeleton, Disclaimer } from '../compo
 import { EditedBadge } from '../components/SignalCard';
 import { formatDateTime, formatPrice, relativeTime } from '../lib/time';
 import { useStore } from '../lib/store';
+import { IS_PLAY_BUILD } from '../lib/flags';
 import type { Signal } from '../lib/types';
 
 function Row({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
@@ -94,13 +95,27 @@ export default function SignalDetails(): React.ReactElement {
         <Panel className="p-6 text-center" testId="details-locked">
           <Lock className="mx-auto mb-3 h-8 w-8 text-sky-300" aria-hidden="true" />
           <h1 className="text-lg font-extrabold text-slate-100">This signal is for Partners</h1>
-          <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">
-            Members can open the newest signals only. Partners see every signal in full, in real
-            time. Our team activates Partner status manually — just reach out.
-          </p>
-          <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-4 inline-block">
-            <Button testId="details-join">Join Our Team</Button>
-          </a>
+          {IS_PLAY_BUILD ? (
+            <>
+              <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">
+                Members can open the newest signals only. Partner accounts see every signal in full, in
+                real time.
+              </p>
+              <Link to="/profile" className="mt-4 inline-block">
+                <Button variant="ghost" testId="details-signin">Already a Partner? Sign in</Button>
+              </Link>
+            </>
+          ) : (
+            <>
+              <p className="mx-auto mt-2 max-w-md text-sm text-slate-400">
+                Members can open the newest signals only. Partners see every signal in full, in real
+                time. Our team activates Partner status manually — just reach out.
+              </p>
+              <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener" className="mt-4 inline-block">
+                <Button testId="details-join">Join Our Team</Button>
+              </a>
+            </>
+          )}
         </Panel>
       ) : error ? (
         <ErrorState message={error} onRetry={load} testId="details-error" />

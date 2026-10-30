@@ -5,6 +5,7 @@ import SignalCard from '../components/SignalCard';
 import { Badge, Button, EmptyState, ErrorState, Panel, SectionTitle, SignalSkeletonList } from '../components/ui';
 import { useSignals } from '../lib/useSignals';
 import { useStore } from '../lib/store';
+import { IS_PLAY_BUILD } from '../lib/flags';
 import { KEYS, read, write } from '../lib/storage';
 
 function AnnouncementBanner(): React.ReactElement | null {
@@ -125,15 +126,23 @@ export default function Feed(): React.ReactElement {
             </span>
             <div className="min-w-0">
               <h3 className="text-base font-bold text-slate-100">{lockedCount} signals are Partner-only</h3>
-              <p className="mt-1 text-sm text-slate-400">
-                Partners get every signal in full, in real time, with instant alerts. Partner access is handled
-                by our team — message us on Telegram and we'll switch you over
-                (usually within 24 hours).
-              </p>
+              {IS_PLAY_BUILD ? (
+                <p className="mt-1 text-sm text-slate-400">
+                  Partner accounts get every signal in full, in real time, with instant alerts.
+                </p>
+              ) : (
+                <p className="mt-1 text-sm text-slate-400">
+                  Partners get every signal in full, in real time, with instant alerts. Partner access is handled
+                  by our team — message us on Telegram and we'll switch you over
+                  (usually within 24 hours).
+                </p>
+              )}
               <div className="mt-3 flex flex-wrap gap-2">
-                <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener">
-                  <Button testId="join-team">Join Our Team</Button>
-                </a>
+                {IS_PLAY_BUILD ? null : (
+                  <a href={config.telegramUrl} target="_blank" rel="noreferrer noopener">
+                    <Button testId="join-team">Join Our Team</Button>
+                  </a>
+                )}
                 <Link to="/profile">
                   <Button variant="ghost" testId="join-account">Create an account</Button>
                 </Link>

@@ -4,6 +4,7 @@ import { BellRing, Clock, Info, Smartphone } from 'lucide-react';
 import TimezonePicker from '../components/TimezonePicker';
 import { Badge, Disclaimer, Panel, SectionTitle } from '../components/ui';
 import { useStore } from '../lib/store';
+import { IS_PLAY_BUILD } from '../lib/flags';
 import { pushIsNative } from '../lib/push';
 import type { NotificationPreferences } from '../lib/types';
 
@@ -115,7 +116,7 @@ export default function Settings(): React.ReactElement {
           <Disclaimer />
         </div>
         <p className="mt-3 text-sm text-slate-400">
-          Need help or want to become a Partner?{' '}
+          {IS_PLAY_BUILD ? 'Need help?' : 'Need help or want to become a Partner?'}{' '}
           <Link to="/contact" className="font-bold text-sky-300 hover:text-sky-200">
             Contact us
           </Link>
